@@ -1,0 +1,6 @@
+ip = "thorin-56.fr"
+password = "survival"
+user = "thorin"
+database = "CineBot"
+table = "movies"
+table2 = "categories"
