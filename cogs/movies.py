@@ -106,16 +106,21 @@ def is_date_format(x: str):
         return False
     if not (x[:2].isdigit() and x[3:5].isdigit() and x[6:].isdigit()):
         return False
+    try:
+        datetime.datetime(*[*map(int, x.split('/'))][::-1])
+    except ValueError:
+        return False
     return True
 
 
 # Enum
-class Emoji(Enum):
+class Emoji(Enume):
     SEP = discord.PartialEmoji(name="sep", id=1419289057187594342)
-    FILTRE = discord.PartialEmoji(name="filtre", id=1419367029852344330)
-    ARROW_UP = discord.PartialEmoji(name="arrow_up", id=1419367009510232064)
-    ADD = discord.PartialEmoji(name="add", id=1419366985191526481)
-    ARROW_DOWN = discord.PartialEmoji(name="arrow_down", id=1419397467425869835)
+    FILTRE = discord.PartialEmoji(name="filter", id=1436077693744582887)
+    ARROW_UP = discord.PartialEmoji(name="arrow_up", id=1436080735499976836)
+    ADD = discord.PartialEmoji(name="add", id=1436071687451050165)
+    ARROW_DOWN = discord.PartialEmoji(name="arrow_down", id=1436077245608235181)
+    SETTINGS = discord.PartialEmoji(name="settings", id=1436052141939884153)
 
 # Constante
 USER_ID_DEFAULT = 0
@@ -141,7 +146,7 @@ FILTER_VALUES = {
     "to_see": {"id": "to_see",
                  "name": "Vue",
                "type": FilterOpt.Enum,
-               "enum": (("Vue", 1), ("Pas vue", 0))},
+               "enum": (("Vue", 0), ("A Voir", 1))},
     "genres": {"id": "genres",
                  "name": "Genres",
                "type": FilterOpt.Genre},
@@ -533,7 +538,6 @@ class FilterMenu:
         if self.filters.filters:
             embed.add_field(name="Filtres actuel:",
                             value='\n'.join([f'```{x.name}```' for x in self.filters.filters]))
-
         return embed
 
     @property
@@ -561,15 +565,14 @@ class FilterMenu:
 
         else:
             btns = []
-            if FILTER_VALUES[self.filter_slc]["type"] == FilterOpt.INT:
-                for btn in FilterOpt.INT._member_map_.values():
+            if FILTER_VALUES[self.filter_slc]["type"] in (FilterOpt.INT, FilterOpt.DATE):
+                for btn in FILTER_VALUES[self.filter_slc]["type"]._member_map_.values():
                     btns.append(Button(btn.value[0], ButtonStyle.blurple,
                                        partial(self.int_open_modal, value=btn, _filter=FILTER_VALUES[self.filter_slc])))
 
-            if FILTER_VALUES[self.filter_slc]["type"] == FilterOpt.DATE:
-                for btn in FilterOpt.DATE._member_map_.values():
-                    btns.append(Button(btn.value[0], ButtonStyle.blurple,
-                                       partial(self.date_open_modal, value=btn, _filter=FILTER_VALUES[self.filter_slc])))
+                btn_cancel = Button("Retour", ButtonStyle.grey, self.cancel_filter)
+
+                btns.append(btn_cancel)
 
             elif FILTER_VALUES[self.filter_slc]["type"] == FilterOpt.Genre:
                 genres = await self.genres
@@ -583,7 +586,7 @@ class FilterMenu:
                                     "", genre_id) for genre_id, genre in genres.items()], self.set_genres_exclude)
 
                 btn_validate = Button("Valider", ButtonStyle.green, self.set_filter_genres)
-                btn_cancel = Button("Retour", ButtonStyle.grey, self.cancel_set_genre)
+                btn_cancel = Button("Retour", ButtonStyle.grey, self.cancel_filter)
 
                 inputs.append(selecteur_include)
                 inputs.append(selecteur_exclude)
@@ -591,7 +594,14 @@ class FilterMenu:
                 inputs.append(btn_cancel)
 
             elif FILTER_VALUES[self.filter_slc]["type"] == FilterOpt.Enum:
-                pass
+                for btn_name, btn_value in FILTER_VALUES[self.filter_slc]["enum"]:
+                    btns.append(
+                        Button(btn_name, ButtonStyle.blurple, partial(self.set_enum_value, value=btn_value,
+                                                                      _filter=FILTER_VALUES[self.filter_slc]))
+                    )
+                btn_cancel = Button("Retour", ButtonStyle.grey, self.cancel_filter)
+
+                btns.append(btn_cancel)
 
             for btn in btns:
                 inputs.append(btn)
@@ -672,6 +682,7 @@ class FilterMenu:
     @valide_inter()
     async def validate(self):
         self.parent.filters = self.filters
+        self.parent.page = 0
         await self.parent.count_pages()
         await self.parent.m_menu()
         del self
@@ -712,15 +723,24 @@ class FilterMenu:
             self.filters.genres_exclude = copy(self.genres_exclude)
 
         self.filter_slc = None
-        self.genres_include.clear()
-        self.genres_exclude.clear()
+        self.genres_include = self.filters.genres_include
+        self.genres_exclude = self.filters.genres_exclude
 
     @valide_inter()
     @menu()
-    async def cancel_set_genre(self):
+    async def cancel_filter(self):
         self.filter_slc = None
-        self.genres_include.clear()
-        self.genres_exclude.clear()
+        self.genres_include = self.filters.genres_include
+        self.genres_exclude = self.filters.genres_exclude
+
+    @valide_inter()
+    @menu()
+    async def set_enum_value(self, value, _filter):
+        self.filters.add_filter(
+            Filter(self.filters, f"{dict(map(lambda x: x[::-1], _filter['enum']))[value]}", True, False,
+                   FilterOpt.Enum.EQUAL.value[1](_filter["id"], value))
+        )
+        self.filter_slc = None
 
 
 class AddMovieMenu:

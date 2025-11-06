@@ -1,38 +1,38 @@
 import datetime
 from copy import deepcopy
-from enum import Enum
+from enum import Enum as Enume
 from functools import reduce
 
 
 class FilterOpt:
 
-    class STR(Enum):
+    class STR(Enume):
         EQUAL = ("Egale", lambda key, value: f"{key}='{value}'")
         NOT_EQUAL = ("Différent", lambda key, value: f"{key}<>'{value}'")
         CONTAINS = ("Contient", lambda key, value: f"{key} like '%{value}%'")
 
-    class INT(Enum):
+    class INT(Enume):
         EQUAL = ("Egale", lambda key, value: f"{key}={value}")
         NOT_EQUAL = ("Différent", lambda key, value: f"{key}<>{value}")
         SUPERIOR = ("Superieure", lambda key, value: f"{key}>{value}")
         INFERIOR = ("Inferieur", lambda key, value: f"{key}<{value}")
         BETWEEN = ("Entre", lambda key, value: f"{key} BETWEEN {value[0]} AND {value[1]}")
 
-    class DATE(Enum):
+    class DATE(Enume):
         EQUAL = ("Egale", lambda key, value: f"{key} BETWEEN {value} AND {value + datetime.timedelta(1)}")
         NOT_EQUAL = ("Différent", lambda key, value: f"{key} NOT BETWEEN {value} AND {value + datetime.timedelta(1)}")
         SUPERIOR = ("Superieure", lambda key, value: f"{key}>{value}")
         INFERIOR = ("Inferieur", lambda key, value: f"{key}<{value}")
         BETWEEN = ("Entre", lambda key, value: f"{key} BETWEEN {value[0]} AND {value[1] + datetime.timedelta(1)}")
 
-    class Genre(Enum):
+    class Genre(Enume):
         INCLUDE = ("Inclus", lambda _, value: f"g.id in {tuple(list(value) + [value[0]])}")
         EXCLUDE = ("Exclus", lambda _, value: (f"m.id not in (SELECT DISTINCT m.id FROM movies m "
                                       f"LEFT JOIN d_genre_movie d on d.movie_id = m.id "
                                       f"LEFT JOIN genres g on g.id = d.genre_id WHERE g.id in {tuple(list(value) + [value[0]])})"))
 
-    class Enum(Enum):
-        EQUAL = lambda key, value: f"{key}={value}"
+    class Enum(Enume):
+        EQUAL = ("Egale", lambda key, value: f"{key}={value}")
 
 
 class Filters:
@@ -72,8 +72,15 @@ class Filters:
     def remove_filter(self, index):
         if 0 <= index < len(self._filters):
             self._filters.pop(index)
-        if index == 0 and self._filters:
-            self._filters[0].as_and = None
+            if index == 0 and self._filters:
+                self._filters[0].as_and = None
+        elif index == len(self._filters):
+            if self.genres_include:
+                self.genres_include.clear()
+            else:
+                self.genres_exclude.clear()
+        elif index == len(self._filters) + 1:
+            self.genres_exclude.clear()
 
     def add_sorter(self, sorter):
         self._sorters.append(sorter)
