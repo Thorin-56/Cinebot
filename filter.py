@@ -1,3 +1,5 @@
+import datetime
+from copy import deepcopy
 from enum import Enum
 from functools import reduce
 
@@ -5,21 +7,29 @@ from functools import reduce
 class FilterOpt:
 
     class STR(Enum):
-        EQUAL = lambda key, value: f"{key}='{value}'"
-        NOT_EQUAL = lambda key, value: f"{key}<>'{value}'"
-        CONTAINS = lambda key, value: f"{key} like '%{value}%'"
+        EQUAL = ("Egale", lambda key, value: f"{key}='{value}'")
+        NOT_EQUAL = ("Différent", lambda key, value: f"{key}<>'{value}'")
+        CONTAINS = ("Contient", lambda key, value: f"{key} like '%{value}%'")
 
     class INT(Enum):
-        EQUAL = lambda key, value: f"{key}={value}"
-        NOT_EQUAL = lambda key, value: f"{key}<>{value}"
-        SUPERIOR = lambda key, value: f"{key}>{value}"
-        INFERIOR = lambda key, value: f"{key}<{value}"
+        EQUAL = ("Egale", lambda key, value: f"{key}={value}")
+        NOT_EQUAL = ("Différent", lambda key, value: f"{key}<>{value}")
+        SUPERIOR = ("Superieure", lambda key, value: f"{key}>{value}")
+        INFERIOR = ("Inferieur", lambda key, value: f"{key}<{value}")
+        BETWEEN = ("Entre", lambda key, value: f"{key} BETWEEN {value[0]} AND {value[1]}")
+
+    class DATE(Enum):
+        EQUAL = ("Egale", lambda key, value: f"{key} BETWEEN {value} AND {value + datetime.timedelta(1)}")
+        NOT_EQUAL = ("Différent", lambda key, value: f"{key} NOT BETWEEN {value} AND {value + datetime.timedelta(1)}")
+        SUPERIOR = ("Superieure", lambda key, value: f"{key}>{value}")
+        INFERIOR = ("Inferieur", lambda key, value: f"{key}<{value}")
+        BETWEEN = ("Entre", lambda key, value: f"{key} BETWEEN {value[0]} AND {value[1] + datetime.timedelta(1)}")
 
     class Genre(Enum):
-        INCLUDE = lambda _, value: f"g.id in {tuple(value)}"
-        EXCLUDE = lambda _, value: (f"m.id not in (SELECT DISTINCT m.id FROM movies m "
+        INCLUDE = ("Inclus", lambda _, value: f"g.id in {tuple(list(value) + [value[0]])}")
+        EXCLUDE = ("Exclus", lambda _, value: (f"m.id not in (SELECT DISTINCT m.id FROM movies m "
                                       f"LEFT JOIN d_genre_movie d on d.movie_id = m.id "
-                                      f"LEFT JOIN genres g on g.id = d.genre_id WHERE g.id in {tuple(value)})")
+                                      f"LEFT JOIN genres g on g.id = d.genre_id WHERE g.id in {tuple(list(value) + [value[0]])})"))
 
     class Enum(Enum):
         EQUAL = lambda key, value: f"{key}={value}"
@@ -27,26 +37,50 @@ class FilterOpt:
 
 class Filters:
     def __init__(self):
-        self.filters: list["Filter"] = []
-        self.sorters: list["Sorter"] = []
+        self._filters: list["Filter"] = []
+        self._sorters: list["Sorter"] = []
+
+        self.genres_include = []
+        self.genres_exclude = []
+
+        self.genres = None
+
+    @property
+    def sorters(self):
+        return self._sorters
+
+    @property
+    def filters(self):
+        filters = deepcopy(self._filters)
+        if self.genres_include:
+            filters.append(
+                Filter(None, f"Inclus {[self.genres[x] for x in self.genres_include]}",
+                       True, False, FilterOpt.Genre.INCLUDE.value[1](None, self.genres_include))
+            )
+        if self.genres_exclude:
+            filters.append(
+                Filter(None, f"Exclus {[self.genres[x] for x in self.genres_exclude]}",
+                       True, False, FilterOpt.Genre.EXCLUDE.value[1](None, self.genres_exclude))
+            )
+        return filters
 
     def add_filter(self, _filter: "Filter"):
-        self.filters.append(_filter)
+        self._filters.append(_filter)
         if _filter.index == 0:
             _filter.as_and = None
 
     def remove_filter(self, index):
-        if 0 <= index < len(self.filters):
-            self.filters.pop(index)
-        if index == 0 and self.filters:
-            self.filters[0].as_and = None
+        if 0 <= index < len(self._filters):
+            self._filters.pop(index)
+        if index == 0 and self._filters:
+            self._filters[0].as_and = None
 
     def add_sorter(self, sorter):
-        self.sorters.append(sorter)
+        self._sorters.append(sorter)
 
     def remove_sorter(self, index):
-        if 0 <= index < len(self.sorters):
-            self.sorters.pop(index)
+        if 0 <= index < len(self._sorters):
+            self._sorters.pop(index)
 
     def get_filter(self) -> list:
         if self.filters:
@@ -56,19 +90,20 @@ class Filters:
             return []
 
     def get_sorters(self) -> list:
-        if self.sorters:
-            sorters_list = reduce(lambda x, y: x + y, self.sorters)
+        if self._sorters:
+            sorters_list = reduce(lambda x, y: x + y, self._sorters)
             return sorters_list.sorters
         else:
             return []
 
     def __bool__(self):
-        return not not (self.filters or self.sorters)
+        return not not (self._filters or self._sorters)
 
 
 class Filter:
-    def __init__(self, parent, name, is_and, is_not, cdt):
+    def __init__(self, parent, name, is_and, is_not, cdt, _id=None):
         self.parent: "Filters" = parent
+        self.id = _id
 
         self.name = name
         self.is_and = is_and
@@ -79,7 +114,7 @@ class Filter:
 
     @property
     def index(self):
-        return self.parent.filters.index(self)
+        return self.parent._filters.index(self)
 
     @property
     def cdt(self):
@@ -121,7 +156,7 @@ class Sorter:
 
     @property
     def index(self):
-        return self.parent.sorters.index(self)
+        return self.parent._sorters.index(self)
 
     @property
     def sorters(self):

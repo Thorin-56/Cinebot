@@ -97,8 +97,17 @@ async def edit_config(config, user_id):
     query = f"UPDATE config SET max_movie_in_page=%s WHERE user_id={user_id}"
     await DatabaseManager.execute_query(query, config)
 
-# Constante
-USER_ID_DEFAULT = 0
+def is_date_format(x: str):
+    if len(x) != 10:
+        return False
+    if x.count("/") != 2:
+        return False
+    if not (x[2] == x[5] == "/"):
+        return False
+    if not (x[:2].isdigit() and x[3:5].isdigit() and x[6:].isdigit()):
+        return False
+    return True
+
 
 # Enum
 class Emoji(Enum):
@@ -108,6 +117,35 @@ class Emoji(Enum):
     ADD = discord.PartialEmoji(name="add", id=1419366985191526481)
     ARROW_DOWN = discord.PartialEmoji(name="arrow_down", id=1419397467425869835)
 
+# Constante
+USER_ID_DEFAULT = 0
+NONE_BTN = Button("", ButtonStyle.grey, None, emoji=Emoji.SEP.value)
+SORTER_VALUES = {
+    "nale": {"id": "name",
+              "name": "Titre"},
+    "duration": {"id": "duration",
+                 "name": "Durée"},
+    "created_on": {"id": "created_on",
+                 "name": "Date d'ajout"},
+    "to_see": {"id": "to_see",
+                 "name": "Vue"},
+}
+
+FILTER_VALUES = {
+    "duration": {"id": "duration",
+                 "name": "Durée",
+                 "type": FilterOpt.INT},
+    "created_on": {"id": "created_on",
+                 "name": "Date d'ajout",
+                   "type": FilterOpt.DATE},
+    "to_see": {"id": "to_see",
+                 "name": "Vue",
+               "type": FilterOpt.Enum,
+               "enum": (("Vue", 1), ("Pas vue", 0))},
+    "genres": {"id": "genres",
+                 "name": "Genres",
+               "type": FilterOpt.Genre},
+}
 
 # Objets
 class Movie:
@@ -164,12 +202,15 @@ class MainMenu:
         self.movie_select_in_page: int | None = None
         self.movies: None | list[Movie] = None
         self.btn_actions = [
-            Button("🗑️", ButtonStyle.red, self.delete_movie),
+            Button("🗑️", ButtonStyle.red, partial(self.f_validate_btn, func=self.delete_movie)),
             Button("📝", ButtonStyle.green, self.edit_movie),
             Button("👁️", ButtonStyle.green, None),
         ]
+        self.btn_cancel = Button("Annuler", ButtonStyle.grey, self.cancel_validation)
         self.movie_select_action = 0
+        self.validate_btn = None
 
+        self.genres = None
         self.filters = Filters()
 
     def cleanup(self):
@@ -179,6 +220,9 @@ class MainMenu:
     async def setup(self):
         default_config, config = (await get_config(((await get_authors())[self.author.name], USER_ID_DEFAULT)))
         self.max_movie_in_page = config[0] if config and config[0] else default_config[0]
+
+        self.genres = dict(await get_genres())
+        self.filters.genres = self.genres
 
         self.page = 0
         await self.count_pages()
@@ -203,25 +247,35 @@ class MainMenu:
 
         ]
 
-        btn_filter = [Button("", ButtonStyle.green, self.filter, Emoji.FILTRE.value)]
-
-        btn_action = [
-            Button("⬅️", ButtonStyle.green, partial(self.switch_action, _dir=-1)),
-            copy(self.btn_actions[self.movie_select_action]),
-            Button("➡️", ButtonStyle.green, partial(self.switch_action, _dir=1)),
-        ]
+        if not self.validate_btn:
+            btn_action = [
+                Button("⬅️", ButtonStyle.green, partial(self.switch_action, _dir=-1)),
+                copy(self.btn_actions[self.movie_select_action]),
+                Button("➡️", ButtonStyle.green, partial(self.switch_action, _dir=1)),
+            ]
+            if self.movie_select_in_page is None:
+                btn_action[1].reset_fct()
+            if self.movie_select_action in (2, -1) and self.movie_select_in_page is not None and self.movies[
+                self.movie_select_in_page].url:
+                btn_action[1].url = self.movies[self.movie_select_in_page].url
+        else:
+            btn_action = [
+                self.validate_btn,
+                self.btn_cancel,
+                Button("", ButtonStyle.grey, None, emoji=Emoji.SEP.value)
+            ]
 
         btn_add_movie = [Button("➕", ButtonStyle.grey, self.add_movie)]
         btn_config = [Button("⚙️", ButtonStyle.grey, self.edit_config)]
 
-        if self.movie_select_in_page is None:
-            btn_action[1].reset_fct()
-        if self.movie_select_action in (2, -1) and self.movie_select_in_page is not None and self.movies[self.movie_select_in_page].url:
-            btn_action[1].url = self.movies[self.movie_select_in_page].url
+        btn_sorter = Button("Trier", ButtonStyle.green, self.open_sorter_menu, emoji=Emoji.ARROW_UP.value)
+        btn_filter = Button("Filtrer", ButtonStyle.green, self.open_filter_menu, emoji=Emoji.FILTRE.value)
+
+
         if self.movies:
-            btn = btn_arrow + btn_filter + slc_select_movie_2 + btn_action + btn_add_movie + btn_config
+            btn = btn_arrow + [NONE_BTN] + slc_select_movie_2 + btn_action + btn_add_movie + btn_config + [btn_sorter, btn_filter]
         else:
-            btn = btn_filter
+            btn = [btn_filter]
 
         return View(self.author, btn, None)
 
@@ -288,8 +342,12 @@ class MainMenu:
         self.page = min(self.page + 5, self.len_pages - 1)
 
     @valide_inter()
-    async def filter(self):
-        await FilterMenu(self).setup()
+    async def open_sorter_menu(self):
+        await SorterMenu(self).m_menu()
+
+    @valide_inter()
+    async def open_filter_menu(self):
+        await FilterMenu(self).m_menu()
 
     @valide_inter()
     async def add_movie(self):
@@ -310,6 +368,16 @@ class MainMenu:
     @valide_inter()
     async def edit_config(self):
         await ConfigMenu(self).setup()
+
+    @valide_inter()
+    @menu(load_movie=False)
+    async def f_validate_btn(self, func):
+        self.validate_btn = Button("Valider", ButtonStyle.green, func)
+
+    @valide_inter()
+    @menu()
+    async def cancel_validation(self):
+        self.validate_btn = None
 
     # /
     async def load_movies(self):
@@ -332,6 +400,7 @@ class MainMenu:
         if load_movie:
             await self.load_movies()
             self.movie_select_in_page = None
+            self.validate_btn = None
         await self.message.resource.edit(embed=self.embed, view=self.view)
 
         # Log
@@ -343,304 +412,315 @@ class MainMenu:
                         f"movie_select: {movie_title})")
 
 
-class FilterMenu:
-    def __init__(self, parent: MainMenu):
+class SorterMenu:
+    def __init__(self, parent):
         self.parent: MainMenu = parent
         self.bot = self.parent.bot
         self.logger = self.parent.logger
         self.message = self.parent.message
+        self.filters = deepcopy(self.parent.filters)
 
-        self.filters: Filters = self.parent.filters
-
-        # menu view
-        self.slc_menu = None
-
-        # Selecteur
-        self.filter_opt_slc = None
-        self.filter_opt = {}
-
-        # Bouton Trie
-        self.sorter_dir = 'ASC'
-
-        # Bouton Filtre
-        self.filter_op = "AND"
-        self.filter_not = ""
-        self.filter_opt_ = None
-        self.filter_value = None
-
-        # Switch Buttons
-        self.mem_SwBtn = {}
-
-    async def _set_filter_opt(self):
-        self.filter_opt = {
-            "duration": {"name": "Durée",
-                         "used": "sf",
-                         "type": FilterOpt.INT},
-            "name": {"name": "Titre",
-                     "used": "sf",
-                     "type": FilterOpt.STR},
-            "created_by": {"name": "Auteur",
-                           "used": "sf",
-                           "type": FilterOpt.Enum,
-                           "values": await get_authors()},
-            "to_see": {"name": "à Voir",
-                       "used": "sf",
-                       "type": FilterOpt.Enum,
-                       "values": {"Oui": 1,
-                                  "Non": 0}},
-            "genres": {"name": "Genre",
-                       "used": "f",
-                       "type": FilterOpt.Genre}
-        }
-
-    async def setup(self):
-        await self._set_filter_opt()
-        await self.m_menu()
+        self.sorter_slc = None
 
     @property
-    def embed(self) -> Embed:
-        embed = Embed(title="Options de Filtre")
-        embed.add_field(name="Tries:", value=f"```{'\n'.join([x.name for x in self.filters.sorters]).strip() or '/'}```")
-        embed.add_field(name="Filtres:", value=f"```{'\n'.join([x.name for x in self.filters.filters]).strip() or '/'}```")
+    async def embed(self) -> Embed:
+        embed = Embed(title="Trier")
+
+        if self.filters.sorters:
+            embed.add_field(name="Trie actuel:",
+                            value='\n'.join([f'```{x.name} {('↓', '↑')[x.is_asc]}```' for x in self.filters.sorters]))
+
         return embed
 
     @property
     async def view(self) -> View:
-        return await self.main_view()
-
-    def filter_slc(self, key: str):
-        if self.filter_opt_slc is None:
-            return None
-        elif self.filter_opt[self.filter_opt_slc] is None:
-            return None
-        elif key:
-            return self.filter_opt[self.filter_opt_slc].get(key)
-        else:
-            return self.filter_opt[self.filter_opt_slc]
-
-    async def main_view(self) -> View:
         inputs = []
-        # Selecteur de l'option
-        slc_title = self.filter_slc("name") or "Filtre: "
-        inputs.append(
-            Selecteur(slc_title, 1, 1,
-                      [SelecteurOption(opt["name"], "", key) for key, opt in self.filter_opt.items()],
-                      self.set_filter_opt_slc)
-        )
 
-        # Delete
-        if self.filters:
-            opt = [SelecteurOption(f"🔷{opt.name}", "", f"f{k}") for k, opt in enumerate(self.filters.filters)] + [
-                SelecteurOption(f"🟩{opt.name}", "", f"s{k}") for k, opt in enumerate(self.filters.sorters)]
-            inputs.append(
-                Selecteur("Delete", 1, len(self.filters.filters) + len(self.filters.sorters), opt, self.delete)
-            )
+        if not self.sorter_slc:
+            # Initalise BTN
+            sorters_btn = []
+            for btn_id, btn_value in SORTER_VALUES.items():
+                sorters_btn.append(Button(btn_value["name"], ButtonStyle.green, partial(self.set_sorter_slc, value=btn_value)))
 
-        # Bouton Trie
-        inputs.append(
-            Button("Trie", ButtonStyle.green,
-                   (self.set_sorter if "s" in self.filter_slc("used") else None) if self.filter_slc("name") else None,
-                   emoji=Emoji.ADD.value)
-        )
+            btn_cancel = Button("Retour", ButtonStyle.grey, self.parent.m_menu)
+            btn_validate = Button("Valider", ButtonStyle.green, self.validate)
 
-        # Bouton Filtre
-        inputs.append(
-            Button("Filtre", ButtonStyle.blurple,
-                   (self.set_filter if "f" in self.filter_slc("used") else None) if self.filter_slc("name") else None,
-                   emoji=Emoji.ADD.value)
-        )
+            selecteur_delete = Selecteur("Retirer trie", 1, len(self.filters.sorters), [
+                SelecteurOption(sorter.name, "", k) for k, sorter in enumerate(self.filters.sorters)
+            ], self.remove_sorter)
 
-        # Valider
-        inputs.append(
-            Button("Valider", ButtonStyle.green, self.valide)
-        )
+            # Ajout BTN
+            for btn in sorters_btn:
+                inputs.append(btn)
 
-        # None Button
-        inputs.append(Button("/", ButtonStyle.grey, None))
-        inputs.append(Button("/", ButtonStyle.grey, None))
-
-        # Options trie
-        if self.slc_menu == 1:
-            inputs.append(Button("", ButtonStyle.green, self.switch_sorter_dir,
-                                 emoji=(Emoji.ARROW_UP, Emoji.ARROW_DOWN)[self.sorter_dir == "DESC"].value))
-            inputs.append(Button("Ajouter", ButtonStyle.green, self.add_sorter))
-
-        # Options filtre
-        if self.slc_menu == 0:
-            if self.filters.filters:
-                inputs.append(Button(self.filter_op.lower(), ButtonStyle.blurple, self.switch_filter_op))
-            inputs.append(Button(f"if {self.filter_not}".lower(), ButtonStyle.blurple, self.switch_filter_not))
-
-            if self.filter_slc("type") == FilterOpt.INT:
-                inputs.append(self.mem_SwBtn.get(self.filter_opt_slc) or
-                              self.mem_SwBtn.update({self.filter_opt_slc: self.sw_btn_int()}) or
-                              self.mem_SwBtn.get(self.filter_opt_slc))
-                inputs.append(Button(self.filter_value or "?", ButtonStyle.blurple, self.open_filter_value_int))
-            elif self.filter_slc("type") == FilterOpt.Enum:
-                inputs.append(self.mem_SwBtn.get(self.filter_opt_slc) or
-                              self.mem_SwBtn.update({self.filter_opt_slc: self.sw_btn_bool()}) or
-                              self.mem_SwBtn.get(self.filter_opt_slc))
-
-
-            elif self.filter_slc("type") == FilterOpt.STR:
-                inputs.append(Button(self.filter_value or "?", ButtonStyle.blurple, self.open_filter_value_str))
-            elif self.filter_slc("type") == FilterOpt.Genre:
-                inputs.append(self.mem_SwBtn.get(self.filter_opt_slc) or
-                              self.mem_SwBtn.update({self.filter_opt_slc: self.sw_btn_genre()}) or
-                              self.mem_SwBtn.get(self.filter_opt_slc))
-                genres = await get_genres()
-                if genres:
-                    inputs.append(
-                        Selecteur("Genres:", 1, len(genres), [
-                            SelecteurOption(genre[1], "", genre[0]) for genre in genres
-                        ], self.set_filter_value)
-                    )
-
-            inputs.append(Button("Ajouter", ButtonStyle.blurple, self.add_filter if self.filter_value
-                                                                                    is not None else None))
-
-        return View(self.parent.author, inputs, None)
-
-    # Switch Btn
-    def sw_btn_int(self) -> SwitchButton:
-        return SwitchButton([
-                    Button("<", ButtonStyle.blurple, partial(self.set_filter_opt, value=FilterOpt.INT.INFERIOR)),
-                    Button("=", ButtonStyle.blurple, partial(self.set_filter_opt, value=FilterOpt.INT.EQUAL)),
-                    Button(">", ButtonStyle.blurple, partial(self.set_filter_opt, value=FilterOpt.INT.SUPERIOR)),
-                ], self.m_menu)
-
-    def sw_btn_bool(self) -> SwitchButton:
-        return SwitchButton([
-            Button(label, ButtonStyle.blurple, partial(self.set_filter_value, value=value))
-            for label, value in self.filter_slc("values").items()], self.m_menu)
-
-    def sw_btn_genre(self) -> SwitchButton:
-        return SwitchButton([
-            Button("inclus", ButtonStyle.blurple, partial(self.set_filter_opt, value=FilterOpt.Genre.INCLUDE)),
-            Button("exclu", ButtonStyle.blurple, partial(self.set_filter_opt, value=FilterOpt.Genre.EXCLUDE)),
-        ], self.m_menu)
-
-    # Boutons
-    async def open_filter_value_int(self, interaction: Interaction):
-        modal = Modal([TextInput(self.filter_slc("name"), 1, 3, check=str.isdigit)], self.set_filter_value_modal)
-        await interaction.response.send_modal(modal)
-
-    async def open_filter_value_str(self, interaction: Interaction):
-        modal = Modal([TextInput(self.filter_slc("name"), 1, 64)], self.set_filter_value_modal)
-        await interaction.response.send_modal(modal)
-
-    @valide_inter()
-    @menu()
-    async def set_filter_value_modal(self, value):
-        if value[self.filter_slc("name")]:
-            self.filter_value = value[self.filter_slc("name")]
-
-    @valide_inter()
-    @menu()
-    async def set_filter_value(self, value):
-        if isinstance(value, list):
-            value = [*map(lambda x: int(x) if isinstance(x, str) and x.isdigit() else x, value)]
-            if len(value) == 1:
-                value.append(0)
-            self.filter_value = [*map(int, value + [0])]
-
-    @valide_inter()
-    async def set_filter_opt(self, value):
-        self.filter_opt_ = value
-
-    # Bouton qui active menu filtre ou menu trie
-    @valide_inter()
-    @menu()
-    async def set_filter(self):
-        self.slc_menu = 0
-
-    @valide_inter()
-    @menu()
-    async def set_sorter(self):
-        self.slc_menu = 1
-
-    # Boutons menu principal
-    @valide_inter()
-    @menu()
-    async def delete(self, values):
-        if not isinstance(values, list):
-            values = [values]
-        for i in sorted(values, key=lambda x: int(x[1:]))[::-1]:
-            if i[0] == "f":
-                self.filters.remove_filter(int(i[1:]))
-            else:
-                self.filters.remove_sorter(int(i[1:]))
-
-
-    @valide_inter()
-    @menu()
-    async def set_filter_opt_slc(self, value):
-        self.filter_opt_slc = value if self.filter_opt_slc != value else None
-        if self.filter_slc("type") == FilterOpt.Enum:
-            self.filter_opt_ = FilterOpt.Enum.EQUAL
-            self.filter_value = list(self.filter_slc("values").values())[0]
-        elif self.filter_slc("type") == FilterOpt.INT:
-            self.filter_opt_ = FilterOpt.INT.INFERIOR
-        elif self.filter_slc("type") == FilterOpt.STR:
-            self.filter_opt_ = FilterOpt.STR.CONTAINS
-        elif self.filter_slc("type") == FilterOpt.Genre:
-            self.filter_opt_ = FilterOpt.Genre.INCLUDE
-        await self.m_menu()
-
-    @valide_inter()
-    @menu()
-    async def switch_sorter_dir(self):
-        self.sorter_dir = ("ASC", "DESC")[self.sorter_dir == "ASC"]
-
-    @valide_inter()
-    @menu()
-    async def switch_filter_op(self):
-        self.filter_op = ("AND", "OR")[self.filter_op == "AND"]
-
-    @valide_inter()
-    @menu()
-    async def switch_filter_not(self):
-        self.filter_not = ("", "NOT")[self.filter_not == ""]
-
-    # Ajout des filtres/tries
-    @valide_inter()
-    @menu()
-    async def add_sorter(self):
-        _sorter = Sorter(self.filters, f"{self.filter_slc('name')} {('↑', '↓')[self.sorter_dir != 'ASC']}",
-                        self.sorter_dir == 'ASC', f"m.{self.filter_opt_slc}")
-        self.filters.add_sorter(_sorter)
-        self.slc_menu = None
-
-    @valide_inter()
-    @menu()
-    async def add_filter(self):
-        where = self.filter_opt_(f"m.{self.filter_opt_slc}", self.filter_value)
-        if self.filter_slc("type") == FilterOpt.Genre:
-            genres = dict(await get_genres())
-            name = (f"{self.filter_slc("name")} {("EXCLUDE", "INCLUDE")[self.filter_opt_ == FilterOpt.Genre.INCLUDE]} "
-                    f"{tuple([genres.get(x) for x in self.filter_value[:-1]])}")
+            inputs.append(btn_cancel)
+            inputs.append(btn_validate)
+            if self.filters.sorters:
+                inputs.append(selecteur_delete)
         else:
-            name = self.filter_slc("name")
-        _filter = Filter(self.filters, name, self.filter_op == "AND", self.filter_not == "NOT",
-                         where)
-        self.filters.add_filter(_filter)
-        self.slc_menu = None
-        self.filter_value = None
+            # Initalise BTN
+            btn_croiss = Button("Croissant ", ButtonStyle.green,
+                                partial(self.add_sorter, value=self.sorter_slc, is_asc=True),
+                                emoji=Emoji.ARROW_UP.value)
+            btn_decroiss = Button("Decroissant ", ButtonStyle.green,
+                                  partial(self.add_sorter, value=self.sorter_slc, is_asc=False),
+                                  emoji=Emoji.ARROW_DOWN.value)
+            btn_cancel = Button("Retour", ButtonStyle.grey, self.cancel_add_sorter)
 
-    # Valide tous les filtres
-    @valide_inter()
-    async def valide(self):
-        self.filter_opt_slc = None
-        self.slc_menu = None
-        await self.parent.setup()
-        # logger
-        self.logger.log(f"[Filter menu] [ID: {self.message.id}] {self.parent.author.name} -> ("
-                        f"filtres: {self.filters.get_filter()}; "
-                        f"tries: {self.filters.get_sorters()})")
+            # Ajout BTN
+            inputs.append(btn_croiss)
+            inputs.append(btn_decroiss)
+            inputs.append(btn_cancel)
+
+        return View(self.parent.author, inputs)
 
     @valide_inter()
     async def m_menu(self):
-        await self.message.resource.edit(embed=self.embed, view=await self.view)
+        await self.message.resource.edit(embed=await self.embed, view=await self.view)
+
+    # Buttons
+    @valide_inter()
+    @menu()
+    async def cancel_add_sorter(self):
+        self.sorter_slc = None
+
+    @valide_inter()
+    @menu()
+    async def set_sorter_slc(self, value):
+        self.sorter_slc = value
+
+    @valide_inter()
+    @menu()
+    async def add_sorter(self, value, is_asc):
+        self.filters.add_sorter(Sorter(self.filters, value["name"], is_asc, "m."+value["id"]))
+        self.sorter_slc = None
+
+    @valide_inter()
+    @menu()
+    async def remove_sorter(self, value):
+        if isinstance(value, list):
+            for x in [*map(int, value)][::-1]:
+                self.filters.remove_sorter(x)
+        elif isinstance(value, str):
+            self.filters.remove_sorter(int(value))
+
+    @valide_inter()
+    async def validate(self):
+        self.parent.filters = self.filters
+        await self.parent.m_menu()
+        del self
+
+
+class FilterMenu:
+    def __init__(self, parent):
+        self.parent: MainMenu = parent
+        self.bot = self.parent.bot
+        self.message = self.parent.message
+        self.logger = self.parent.logger
+
+        self.filters = deepcopy(self.parent.filters)
+        self.filter_slc = None
+
+        self._genre = None
+
+        self.genres_include = self.filters.genres_include
+        self.genres_exclude = self.filters.genres_exclude
+
+    @property
+    async def embed(self) -> Embed:
+        embed = Embed(title="Filtrer")
+
+        if self.filters.filters:
+            embed.add_field(name="Filtres actuel:",
+                            value='\n'.join([f'```{x.name}```' for x in self.filters.filters]))
+
+        return embed
+
+    @property
+    async def view(self) -> View:
+        inputs = []
+
+        if not self.filter_slc:
+            filter_btn = []
+            for btn_id, btn_value in FILTER_VALUES.items():
+                filter_btn.append(Button(btn_value["name"], ButtonStyle.blurple, partial(self.set_filter_slc, value=btn_id)))
+
+            btn_validate = Button("Valider", ButtonStyle.green, self.validate)
+            btn_cancel = Button("Annuler", ButtonStyle.grey, self.parent.m_menu)
+
+            selecteur_delete = Selecteur("Retirer Filtre", 1, len(self.filters.filters), [
+                SelecteurOption(_filter.name[:100], "", k) for k, _filter in enumerate(self.filters.filters)
+            ], self.remove_filter)
+
+            for btn in filter_btn:
+                inputs.append(btn)
+            inputs.append(btn_validate)
+            inputs.append(btn_cancel)
+            if self.filters.filters:
+                inputs.append(selecteur_delete)
+
+        else:
+            btns = []
+            if FILTER_VALUES[self.filter_slc]["type"] == FilterOpt.INT:
+                for btn in FilterOpt.INT._member_map_.values():
+                    btns.append(Button(btn.value[0], ButtonStyle.blurple,
+                                       partial(self.int_open_modal, value=btn, _filter=FILTER_VALUES[self.filter_slc])))
+
+            if FILTER_VALUES[self.filter_slc]["type"] == FilterOpt.DATE:
+                for btn in FilterOpt.DATE._member_map_.values():
+                    btns.append(Button(btn.value[0], ButtonStyle.blurple,
+                                       partial(self.date_open_modal, value=btn, _filter=FILTER_VALUES[self.filter_slc])))
+
+            elif FILTER_VALUES[self.filter_slc]["type"] == FilterOpt.Genre:
+                genres = await self.genres
+
+                selecteur_include = Selecteur("Genres Inclus", 1, len(genres), [
+                    SelecteurOption(f"🔹{genre}🔹" if genre_id in self.genres_include else genre,
+                                    "", genre_id) for genre_id, genre in genres.items()], self.set_genres_include)
+
+                selecteur_exclude = Selecteur("Genres Exclus", 1, len(genres), [
+                    SelecteurOption(f"🔹{genre}🔹" if genre_id in self.genres_exclude else genre,
+                                    "", genre_id) for genre_id, genre in genres.items()], self.set_genres_exclude)
+
+                btn_validate = Button("Valider", ButtonStyle.green, self.set_filter_genres)
+                btn_cancel = Button("Retour", ButtonStyle.grey, self.cancel_set_genre)
+
+                inputs.append(selecteur_include)
+                inputs.append(selecteur_exclude)
+                inputs.append(btn_validate)
+                inputs.append(btn_cancel)
+
+            elif FILTER_VALUES[self.filter_slc]["type"] == FilterOpt.Enum:
+                pass
+
+            for btn in btns:
+                inputs.append(btn)
+
+        return View(self.parent.author, inputs)
+
+
+    @valide_inter()
+    async def m_menu(self):
+        await self.message.resource.edit(embed=await self.embed, view=await self.view)
+
+    @property
+    async def genres(self):
+        if not self._genre:
+            self._genre = dict(await get_genres())
+
+        return self._genre
+
+    # Buttons
+    @valide_inter()
+    @menu()
+    async def set_filter_slc(self, value):
+        self.filter_slc = value
+
+    async def int_open_modal(self, interaction: Interaction, value: FilterOpt.INT, _filter):
+        if value == FilterOpt.INT.BETWEEN:
+            modal = Modal([
+                TextInput("Entre", 1, 3, str.isdigit),
+                TextInput("et ", 1, 3, str.isdigit)],
+                partial(self.int_get_modal, opt=value, _filter=_filter))
+        else:
+            modal = Modal([
+                TextInput("Valeur",1, 3    , str.isdigit)],
+                partial(self.int_get_modal, opt=value, _filter=_filter))
+        await interaction.response.send_modal(modal)
+
+    async def date_open_modal(self, interaction: Interaction, value: FilterOpt.INT, _filter):
+        if value == FilterOpt.DATE.BETWEEN:
+            modal = Modal([
+                TextInput("Entre (dd/mm/aaaa)", 10, 10, is_date_format),
+                TextInput("et (dd/mm/aaaa)", 10, 10, is_date_format)],
+                partial(self.date_get_modal, opt=value, _filter=_filter))
+        else:
+            modal = Modal([
+                TextInput("Valeur (dd/mm/aaaa)",10, 10 , is_date_format)],
+                partial(self.date_get_modal, opt=value, _filter=_filter))
+        await interaction.response.send_modal(modal)
+
+    @valide_inter()
+    @menu()
+    async def int_get_modal(self, value, opt: FilterOpt.INT, _filter):
+        value = list(value.values())
+        if len(value) == 1:
+            value = value[0]
+
+        self.filters.add_filter(
+            Filter(self.filters,
+                   f"{_filter["name"]} {opt.value[0]} {value}",
+                   True, False, opt.value[1]("m."+_filter["id"], value))
+        )
+        self.filter_slc = None
+
+    @valide_inter()
+    @menu()
+    async def date_get_modal(self, value, opt: FilterOpt.INT, _filter):
+        value = list(value.values())
+        if len(value) == 1:
+            value = value[0]
+            value = f"'{datetime.datetime(*map(int, value.split("/")[::-1]))}'"
+
+        self.filters.add_filter(
+            Filter(self.filters,
+                   f"{_filter["name"]} {opt.value[0]} {value}",
+                   True, False, opt.value[1]("m."+_filter["id"], value))
+        )
+        self.filter_slc = None
+
+    @valide_inter()
+    async def validate(self):
+        self.parent.filters = self.filters
+        await self.parent.count_pages()
+        await self.parent.m_menu()
+        del self
+
+    @valide_inter()
+    @menu()
+    async def remove_filter(self, value):
+        if isinstance(value, list):
+            for index in [*map(int, value)][::-1]:
+                self.filters.remove_filter(index)
+        elif isinstance(value, str):
+            self.filters.remove_filter(int(value))
+
+    @valide_inter()
+    @menu()
+    async def set_genres_include(self, values):
+        for i in [*map(int, values)]:
+            if i in self.genres_include:
+                self.genres_include.remove(i)
+            else:
+                self.genres_include.append(i)
+
+    @valide_inter()
+    @menu()
+    async def set_genres_exclude(self, values):
+        for i in [*map(int, values)]:
+            if i in self.genres_exclude:
+                self.genres_exclude.remove(i)
+            else:
+                self.genres_exclude.append(i)
+
+    @valide_inter()
+    @menu()
+    async def set_filter_genres(self):
+        if self.genres_include:
+            self.filters.genres_include = copy(self.genres_include)
+        if self.genres_exclude:
+            self.filters.genres_exclude = copy(self.genres_exclude)
+
+        self.filter_slc = None
+        self.genres_include.clear()
+        self.genres_exclude.clear()
+
+    @valide_inter()
+    @menu()
+    async def cancel_set_genre(self):
+        self.filter_slc = None
+        self.genres_include.clear()
+        self.genres_exclude.clear()
 
 
 class AddMovieMenu:
@@ -717,7 +797,7 @@ class AddMovieMenu:
             TextInput("Durée", 1, 3, check=str.isdigit, default=self.movie.duration),
             TextInput("A voir (o/n)", 1, 1, lambda x: x in "on",
                       "no"[self.movie.to_see] if self.movie.to_see is not None else None),
-            TextInput("Url", 0, 255, default=self.movie.url),
+            TextInput("Url", 0, 255, default=self.movie.url, required=False),
         ], self.edit_callback_modal)
         await interaction.response.send_modal(modal)
 
@@ -768,6 +848,7 @@ class AddMovieMenu:
             await DetailMovieMenu(self, query).m_menu(interaction)
         else:
             await DetailMovieMenu(self).m_menu(interaction)
+
 
 class SearchMovieMenu:
     def __init__(self, parent, query):

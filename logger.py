@@ -5,6 +5,8 @@ import datetime
 class Logger:
     def __init__(self):
         self.dir_path = "./logs"
+        if not os.path.exists(self.dir_path):
+            os.makedirs(self.dir_path)
         self.__struct_name_file = "logs-{D}_{M}_{Y}-{id}.log"
         self.file_name = self.__get_last_file_name()
 

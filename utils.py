@@ -87,12 +87,13 @@ class Selecteur:
 
 
 class TextInput:
-    def __init__(self, label, min_length, max_length, check=None, default=None):
+    def __init__(self, label, min_length, max_length, check=None, default=None, required=True):
         self.label = label
         self.min_length = min_length
         self.max_length = max_length
         self.check = check
         self.default = default
+        self.required = required
 
 
 class SelecteurOption:
@@ -149,9 +150,10 @@ class Modal(discord.ui.Modal):
             if text_input.label in [i.label for i in self.text_inputs]:
                 raise ValueError("Il faut des labels différents")
             _text_input = discord.ui.TextInput(label=text_input.label,
-                                              min_length=text_input.min_length,
-                                              max_length=text_input.max_length,
-                                              default=text_input.default)
+                                               min_length=text_input.min_length,
+                                               max_length=text_input.max_length,
+                                               default=text_input.default,
+                                               required=text_input.required)
             self.text_inputs.update({_text_input: text_input})
             self.add_item(_text_input)
 
