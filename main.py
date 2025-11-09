@@ -20,7 +20,7 @@ class MyBot(commands.Bot):
 
     async def setup_hook(self):
         cogs_path = "cogs"
-        file_paths = ["movies"]
+        file_paths = ["movies.movies"]
         for filename in file_paths:
             await self.load_extension(f'{cogs_path}.{filename}')
             print(f"Loaded Cog: {filename}")

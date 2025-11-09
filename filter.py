@@ -19,11 +19,11 @@ class FilterOpt:
         BETWEEN = ("Entre", lambda key, value: f"{key} BETWEEN {value[0]} AND {value[1]}")
 
     class DATE(Enume):
-        EQUAL = ("Egale", lambda key, value: f"{key} BETWEEN {value} AND {value + datetime.timedelta(1)}")
-        NOT_EQUAL = ("Différent", lambda key, value: f"{key} NOT BETWEEN {value} AND {value + datetime.timedelta(1)}")
-        SUPERIOR = ("Superieure", lambda key, value: f"{key}>{value}")
-        INFERIOR = ("Inferieur", lambda key, value: f"{key}<{value}")
-        BETWEEN = ("Entre", lambda key, value: f"{key} BETWEEN {value[0]} AND {value[1] + datetime.timedelta(1)}")
+        EQUAL = ("Egale", lambda key, value: f"{key} BETWEEN '{value}' AND '{value + datetime.timedelta(1)}'")
+        NOT_EQUAL = ("Différent", lambda key, value: f"{key} NOT BETWEEN '{value}' AND '{value + datetime.timedelta(1)}'")
+        SUPERIOR = ("Superieure", lambda key, value: f"{key}>'{value}'")
+        INFERIOR = ("Inferieur", lambda key, value: f"{key}<'{value}'")
+        BETWEEN = ("Entre", lambda key, value: f"{key} BETWEEN '{value[0]}' AND '{value[1] + datetime.timedelta(1)}'")
 
     class Genre(Enume):
         INCLUDE = ("Inclus", lambda _, value: f"g.id in {tuple(list(value) + [value[0]])}")
@@ -105,6 +105,12 @@ class Filters:
 
     def __bool__(self):
         return not not (self._filters or self._sorters)
+
+    def clear(self):
+        self._filters.clear()
+        self._sorters.clear()
+        self.genres_include.clear()
+        self.genres_exclude.clear()
 
 
 class Filter:

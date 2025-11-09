@@ -1,10 +1,9 @@
 from functools import partial
 from typing import Callable
-
 import discord
 import requests
 from discord import ButtonStyle
-from fuzzywuzzy import fuzz
+from discord.ui import TextDisplay, ActionRow
 
 
 def str_hour(x):
@@ -55,11 +54,18 @@ class Button:
         self.function = function
         self.emoji = emoji
         self.url = url
+        self._item = None
 
     def reset_fct(self):
         self.function = None
         return self
 
+    @property
+    def item(self):
+        if not self._item:
+            self._item = discord.ui.Button(label=self.label, style=self.color,
+                                           disabled=not not (self.url or self.function), url=self.url)
+        return self._item
 
 class SwitchButton(Button):
     def __init__(self, buttons: list[Button], function):
@@ -76,8 +82,9 @@ class SwitchButton(Button):
         await self.buttons[self.pos].function()
         await self._function(*args, **kwargs)
 
+
 class Selecteur:
-    def __init__(self, label, minim, maxi, option, function: callable, emoji=None):
+    def __init__(self, label, minim, maxi, option, function: Callable, emoji=None):
         self.label = label
         self.min = minim
         self.max = maxi
@@ -87,13 +94,22 @@ class Selecteur:
 
 
 class TextInput:
-    def __init__(self, label, min_length, max_length, check=None, default=None, required=True):
+    def __init__(self, label, min_length, max_length, name, check=None, default=None, required=True):
         self.label = label
         self.min_length = min_length
         self.max_length = max_length
+        self.name = name
         self.check = check
         self.default = default
         self.required = required
+        self._item = None
+
+    @property
+    def item(self) -> discord.ui.TextInput:
+        if not self._item:
+            self._item = discord.ui.TextInput(label=self.label, min_length=self.min_length, max_length=self.max_length,
+                                    default=self.default, required=self.required)
+        return self._item
 
 
 class SelecteurOption:
@@ -142,236 +158,33 @@ class View(discord.ui.View):
 
 
 class Modal(discord.ui.Modal):
-    def __init__(self, text_inputs: list[TextInput], callback: Callable = callable):
+    def __init__(self, items: list[TextInput | discord.ui.Item | Button], callback: Callable = callable):
         super().__init__(title="Movie")
-        self.text_inputs = {}
+        self.text_inputs: dict[discord.ui.TextInput, TextInput] = {}
         self.callback = callback
-        for text_input in text_inputs:
-            if text_input.label in [i.label for i in self.text_inputs]:
-                raise ValueError("Il faut des labels différents")
-            _text_input = discord.ui.TextInput(label=text_input.label,
-                                               min_length=text_input.min_length,
-                                               max_length=text_input.max_length,
-                                               default=text_input.default,
-                                               required=text_input.required)
-            self.text_inputs.update({_text_input: text_input})
-            self.add_item(_text_input)
+        if not items:
+            raise IndexError("au moins 1 item requis")
+
+        for item in items:
+            if isinstance(item, TextInput):
+                if item.name in [i.label for i in self.text_inputs]:
+                    raise ValueError("Il faut des labels différents")
+
+                self.text_inputs.update({item.item: item})
+                self.add_item(item.item)
+            elif isinstance(item, (TextDisplay, ActionRow)):
+                self.add_item(item)
+
 
     async def on_submit(self, interaction: discord.Interaction):
         values = {}
         for i, j in self.text_inputs.items():
             if j.check:
+                print(i.value)
                 if not j.check(i.value):
-                    values.update({i.label: None})
+                    values.update({j.name: None})
                     continue
-            values.update({i.label: i.value})
+            values.update({j.name: i.value})
 
         await self.callback(interaction, values)
 
-
-async def search(entry: str, liste: list, nbr: int = 25):
-    tried_list = list(sorted(liste, key=lambda x: fuzz.partial_ratio(entry, x)))[::-1]
-    return tried_list[:(min(nbr, len(liste)))]
-
-
-class FormParams:
-    def __init__(self, name, description, value=None, key=None, falcutatif=False, formatage=None):
-        self.name = name
-        self.value_ = value
-        self.key = key or name
-        self.description = description
-        self.facultatif = falcutatif
-        self.formatage = formatage
-
-    @property
-    def value(self):
-        return self.value_
-
-    @value.setter
-    def value(self, value):
-        self.value_ = value
-
-
-class FormText(FormParams):
-    def __init__(self, name, description, check: partial | None = None, *args, **kwargs):
-        super().__init__(name, description, *args, **kwargs)
-        self.check = check
-
-
-class FormEnum(FormParams):
-    def __init__(self, name, description, params: list[SelecteurOption], minim, maxi, *args, **kwargs):
-        super().__init__(name, description, *args, **kwargs)
-        self.value_ = self.value_ or []
-        self.params = params
-        self.min = minim
-        self.max = maxi
-
-    @property
-    def value(self):
-        if self.value_:
-            return ", ".join([str(value) for value in self.value_])
-        else:
-            return None
-
-    @value.setter
-    def value(self, value):
-        self.value_ = value
-
-
-class FormBool(FormParams):
-    def __init__(self, name, description, params: tuple[any, any], *args, **kwargs):
-        super().__init__(name, description, *args, **kwargs)
-        self.value_ = self.value_ if self.value_ is not None else []
-        self.params = params
-
-    def switch(self):
-        self.value = self.params[self.params.index(self.value) - 1] if self.value in self.params else self.params[0]
-
-
-class FormList(FormParams):
-    def __init__(self, name, description, params: dict, value: list | None = None, *args, **kwargs):
-        super().__init__(name, description, value=value, *args, **kwargs)
-        self.params: dict = params
-        self.reverse_params: dict = {param[1]: param[0] for param in self.params.items()}
-        self.value_ = self.value_ or []
-
-    @property
-    def value(self):
-        if self.value_:
-            return ", ".join([str(self.params[value.__str__()]) for value in self.value_])
-        else:
-            return None
-
-    @value.setter
-    def value(self, value):
-        self.value_ = value
-
-
-class Form:
-    def __init__(self, ctx, title: str, params: list[FormParams], callback):
-        self.ctx = ctx
-        self.title = title
-        self.params = params
-        self.main_embed = self.embed
-        self.callback_ = callback
-
-    @property
-    def can_valide(self):
-        for param in self.params:
-            if param.value is None and not param.facultatif:
-                return False
-        return True
-
-    @property
-    def embed(self):
-
-        description = []
-        for param in self.params:
-            aff_value = "?"
-            if param.value is not None:
-                aff_value = param.value
-            if param.formatage:
-                aff_value = param.formatage(aff_value)
-            description.append(f"**{param.name}**:  {aff_value}")
-
-        return discord.Embed(
-            title=self.title,
-            description="\n".join(description))
-
-    @property
-    def view(self):
-        options = [
-            Button(param.name, discord.ButtonStyle.green, partial(self.callback, param=param)) for param in self.params
-        ]
-        if self.can_valide:
-            options += [
-                Button("Valider", discord.ButtonStyle.primary,
-                       partial(self.valide, values={param.key: param.value_ for param in self.params}))]
-        options.append(Button("Annuler", discord.ButtonStyle.red, self.cancel))
-
-        return View(self.ctx, options)
-
-    async def valide(self, interaction: discord.Interaction, values):
-        await self.callback_(interaction, values)
-
-    @staticmethod
-    async def cancel(interaction: discord.Interaction):
-        await interaction.response.edit_message(content="Form Annulé avec succès", embed=None, view=None)
-
-    async def callback(self, interaction: discord.Interaction, param: FormParams):
-        if isinstance(param, FormText):
-            modal = Modal([TextInput(param.name, 1, 32,
-                                     default=param.value)], partial(self.enter_txt, param=param))
-            await interaction.response.send_modal(modal)
-        elif isinstance(param, FormEnum):
-            embed = discord.Embed(title=self.title, description=param.description)
-            view = View(self.ctx, [
-                Selecteur(param.name, param.min, param.max, sorted(param.params, key=lambda x: x.label),
-                          partial(self.get_enum, param=param))])
-            await interaction.response.edit_message(embed=embed, view=view)
-        elif isinstance(param, FormList):
-            await self.menu_search(interaction, "", set(), param)
-        elif isinstance(param, FormBool):
-            param.switch()
-            await interaction.response.edit_message(embed=self.embed, view=self.view)
-
-    async def enter_txt(self, interaction: discord.Interaction, values: dict, param: FormText):
-        value = values[param.name]
-        is_check = True
-        if param.check:
-            is_check = param.check(value)
-        if not is_check:
-            await interaction.response.send_message("Saisi Incorecte", ephemeral=True)
-        else:
-            param.value = value
-            await interaction.response.edit_message(embed=self.embed, view=self.view)
-
-    async def get_enum(self, interaction: discord.Interaction, values: list, param: FormEnum):
-        param.value = values
-        await interaction.response.edit_message(embed=self.embed, view=self.view)
-
-    async def searche_list(self, interaction: discord.Interaction, values, param: FormList):
-        modal = Modal([
-            TextInput(param.name, 1, 256)
-        ], partial(self.resp_search_list, values=values, param=param))
-        await interaction.response.send_modal(modal)
-
-    async def resp_search_list(self, interaction: discord.Interaction, text_values: dict, values, param: FormList):
-        value = text_values[param.name]
-        await self.menu_search(interaction, value, values, param)
-
-    async def menu_search(self, interaction: discord.Interaction, entry, values, param: FormList):
-        resultes = [param.reverse_params[x] for x in await search(entry, list(param.params.values()), 25)]
-        options = [
-            Button("Rechercher", discord.ButtonStyle.green, partial(self.searche_list, values=values, param=param)),
-            Selecteur("Ajouter", 1, min(25, len(resultes)), [
-                SelecteurOption(param.params[x], '', x) for x in resultes],
-                      partial(self.list_add_value, search_v=entry, values=values, param=param)),
-            Button("Valider", discord.ButtonStyle.green, partial(self.valide_list, values=values, param=param)),
-            Button("Annuler", discord.ButtonStyle.red, self.cancel_list)
-        ]
-        if values:
-            options.insert(2, Selecteur("Retirer", 1, min(25, len(values)), [
-                SelecteurOption(param.params[x.__str__()], '', x) for x in values],
-                      partial(self.list_remove_value, search_v=entry, values=values, param=param)))
-
-        embed = discord.Embed(title=self.title,
-                              description=param.description + f"\n **Values:** "
-                                                              f"{", ".join([param.params[value] for value in values])}")
-        view = View(self.ctx, options)
-        await interaction.response.edit_message(embed=embed, view=view)
-
-    async def list_add_value(self, interaction: discord.Interaction, value, search_v, values: set, param: FormList):
-        values |= set(value)
-        await self.menu_search(interaction, search_v, values, param)
-
-    async def list_remove_value(self, interaction: discord.Interaction, value, search_v, values: set, param: FormList):
-        values -= set(value)
-        await self.menu_search(interaction, search_v, values, param)
-
-    async def valide_list(self, interaction: discord.Interaction, values, param: FormList):
-        param.value = values
-        await interaction.response.edit_message(embed=self.embed, view=self.view)
-
-    async def cancel_list(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(embed=self.embed, view=self.view)

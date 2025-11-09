@@ -3,6 +3,7 @@ from copy import copy
 
 from discord import app_commands, Embed
 from discord.ext import commands
+from discord.ui import ActionRow
 from dotenv import load_dotenv
 
 from database_manager import DatabaseManager
@@ -116,10 +117,10 @@ def is_date_format(x: str):
 # Enum
 class Emoji(Enume):
     SEP = discord.PartialEmoji(name="sep", id=1419289057187594342)
-    FILTRE = discord.PartialEmoji(name="filter", id=1436077693744582887)
+    FILTRE = discord.PartialEmoji(name="filter", id=1436425969346019469)
     ARROW_UP = discord.PartialEmoji(name="arrow_up", id=1436080735499976836)
     ADD = discord.PartialEmoji(name="add", id=1436071687451050165)
-    ARROW_DOWN = discord.PartialEmoji(name="arrow_down", id=1436077245608235181)
+    ARROW_DOWN = discord.PartialEmoji(name="arrow_down", id=1436080125941907528)
     SETTINGS = discord.PartialEmoji(name="settings", id=1436052141939884153)
 
 # Constante
@@ -196,6 +197,9 @@ class MainMenu:
 
         self.author: discord.User | discord.Member = author
 
+        #Menu
+        self.menu_p = 0
+
         # Config
         self.max_movie_in_page: int = 0
 
@@ -206,11 +210,6 @@ class MainMenu:
         # Movie selectionne
         self.movie_select_in_page: int | None = None
         self.movies: None | list[Movie] = None
-        self.btn_actions = [
-            Button("🗑️", ButtonStyle.red, partial(self.f_validate_btn, func=self.delete_movie)),
-            Button("📝", ButtonStyle.green, self.edit_movie),
-            Button("👁️", ButtonStyle.green, None),
-        ]
         self.btn_cancel = Button("Annuler", ButtonStyle.grey, self.cancel_validation)
         self.movie_select_action = 0
         self.validate_btn = None
@@ -231,58 +230,54 @@ class MainMenu:
 
         self.page = 0
         await self.count_pages()
-        await self.m_menu()
+        await self.m_menu(load_movie=True)
 
     @property
     def view(self) -> View:
+        menu_pages = [self.view_p1, self.view_p2]
+        return menu_pages[self.menu_p]
+
+    @property
+    def view_p1(self) -> View:
+        inputs = []
+
+        btn_arrow_left5 = Button("⏪", ButtonStyle.blurple, (None, self.move_double_left_page)[self.page > 0])
+        btn_arrow_left = Button("◀️", ButtonStyle.blurple, (None, self.move_left_page)[self.page > 0])
+        btn_arrow_right = Button("▶️", ButtonStyle.blurple, (None, self.move_right_page)[self.page < self.len_pages - 1])
+        btn_arrow_right5 = Button("⏩", ButtonStyle.blurple, (None, self.move_double_right_page)[self.page < self.len_pages - 1])
+        btn_settings = Button("", ButtonStyle.grey, partial(self.set_menu_p, page=1), emoji=Emoji.SETTINGS.value)
 
         slc_select_movie_title = self.movies[self.movie_select_in_page].title \
             if self.movie_select_in_page is not None else "Selecionner un film"
-        slc_select_movie_2 = [
-            Selecteur(slc_select_movie_title, 1, 1, [
+        slc_select_movie_2 = Selecteur(slc_select_movie_title, 1, 1, [
                 SelecteurOption(f"{"🔷" if k == self.movie_select_in_page else ""} {movie.title}", "", k)
                 for k, movie in enumerate(self.movies)], self.select_movie)
-        ]
 
-        btn_arrow = [
-            Button("⏪", ButtonStyle.blurple, (None, self.move_double_left_page)[self.page > 0]),
-            Button("◀️", ButtonStyle.blurple, (None, self.move_left_page)[self.page > 0]),
-            Button("▶️", ButtonStyle.blurple, (None, self.move_right_page)[self.page < self.len_pages - 1]),
-            Button("⏩", ButtonStyle.blurple, (None, self.move_double_right_page)[self.page < self.len_pages - 1]),
+        btn_edit = Button("📝", ButtonStyle.green, self.edit_movie)
+        btn_delete = Button("🗑️", ButtonStyle.red, self.delete_movie)
+        url = self.movies[self.movie_select_in_page].url if self.movie_select_in_page else None
+        btn_view = Button("👁️", ButtonStyle.green, None, url=url)
+        btn_back = Button("Retour", ButtonStyle.green, self.deselect_movie)
 
-        ]
-
-        if not self.validate_btn:
-            btn_action = [
-                Button("⬅️", ButtonStyle.green, partial(self.switch_action, _dir=-1)),
-                copy(self.btn_actions[self.movie_select_action]),
-                Button("➡️", ButtonStyle.green, partial(self.switch_action, _dir=1)),
-            ]
-            if self.movie_select_in_page is None:
-                btn_action[1].reset_fct()
-            if self.movie_select_action in (2, -1) and self.movie_select_in_page is not None and self.movies[
-                self.movie_select_in_page].url:
-                btn_action[1].url = self.movies[self.movie_select_in_page].url
+        # Ajout des boutons
+        if self.movie_select_in_page is None:
+            # Ligne 1
+            inputs.append(btn_arrow_left5)
+            inputs.append(btn_arrow_left)
+            inputs.append(btn_arrow_right)
+            inputs.append(btn_arrow_right5)
+            inputs.append(btn_settings)
+            # Ligne 2
+            inputs.append(slc_select_movie_2)
         else:
-            btn_action = [
-                self.validate_btn,
-                self.btn_cancel,
-                Button("", ButtonStyle.grey, None, emoji=Emoji.SEP.value)
-            ]
+            # Ligne 1
+            inputs.append(btn_edit)
+            inputs.append(btn_delete)
+            inputs.append(btn_view)
+            inputs.append(NONE_BTN)
+            inputs.append(btn_back)
 
-        btn_add_movie = [Button("➕", ButtonStyle.grey, self.add_movie)]
-        btn_config = [Button("⚙️", ButtonStyle.grey, self.edit_config)]
-
-        btn_sorter = Button("Trier", ButtonStyle.green, self.open_sorter_menu, emoji=Emoji.ARROW_UP.value)
-        btn_filter = Button("Filtrer", ButtonStyle.green, self.open_filter_menu, emoji=Emoji.FILTRE.value)
-
-
-        if self.movies:
-            btn = btn_arrow + [NONE_BTN] + slc_select_movie_2 + btn_action + btn_add_movie + btn_config + [btn_sorter, btn_filter]
-        else:
-            btn = [btn_filter]
-
-        return View(self.author, btn, None)
+        return View(self.author, inputs, None)
 
     @property
     def embed(self) -> Embed:
@@ -314,16 +309,6 @@ class MainMenu:
     @menu(load_movie=False)
     def select_movie(self, nbr):
         self.movie_select_in_page = None if self.movie_select_in_page == int(nbr) else int(nbr)
-
-    # Movie actions
-    @valide_inter()
-    @menu(load_movie=False)
-    def switch_action(self, _dir: int):
-        self.movie_select_action += _dir
-        if self.movie_select_action >= len(self.btn_actions):
-            self.movie_select_action = 0
-        elif self.movie_select_action < 0:
-            self.movie_select_action = len(self.btn_actions) - 1
 
     # Arrows
     @valide_inter()
@@ -359,25 +344,25 @@ class MainMenu:
         await AddMovieMenu(self).m_menu()
 
     @valide_inter()
-    async def edit_movie(self):
-        genres = await get_genre_movie(self.movies[self.movie_select_in_page].movie_id)
-        genres = [genre[1] for genre in genres]
-        self.movies[self.movie_select_in_page].genre = genres
-        await EditMovieMenu(self, self.movies[self.movie_select_in_page]).m_menu()
-
-    @valide_inter()
-    @menu()
-    async def delete_movie(self):
-        await delete_movie(self.movies[self.movie_select_in_page].movie_id)
+    async def manage_genre(self):
+        await AddMovieMenu(self).m_menu()
 
     @valide_inter()
     async def edit_config(self):
         await ConfigMenu(self).setup()
 
     @valide_inter()
-    @menu(load_movie=False)
-    async def f_validate_btn(self, func):
-        self.validate_btn = Button("Valider", ButtonStyle.green, func)
+    async def edit_movie(self):
+        genres = await get_genre_movie(self.movies[self.movie_select_in_page].movie_id)
+        genres = [genre[1] for genre in genres]
+        self.movies[self.movie_select_in_page].genre = genres
+        await EditMovieMenu(self, self.movies[self.movie_select_in_page]).m_menu()
+
+    @valide_act()
+    @valide_inter()
+    @menu()
+    async def delete_movie(self):
+        await delete_movie(self.movies[self.movie_select_in_page].movie_id)
 
     @valide_inter()
     @menu()
@@ -401,7 +386,7 @@ class MainMenu:
         self.len_pages = movies_count // self.max_movie_in_page + bool(movies_count % self.max_movie_in_page)
 
     @valide_inter()
-    async def m_menu(self, load_movie=True):
+    async def m_menu(self, load_movie=False):
         if load_movie:
             await self.load_movies()
             self.movie_select_in_page = None
@@ -415,6 +400,49 @@ class MainMenu:
         self.logger.log(f"[Main menu] [ID: {self.message.id}] {self.author.name} -> ("
                         f"page: {self.page + 1}/{self.len_pages}; "
                         f"movie_select: {movie_title})")
+
+    @valide_inter()
+    @menu()
+    async def deselect_movie(self):
+        self.movie_select_in_page = None
+
+    @property
+    def view_p2(self) -> View:
+        inputs = []
+
+        btn_add_movie = Button("➕ Film", ButtonStyle.grey, self.add_movie)
+        btn_config = Button("⚙️", ButtonStyle.grey, self.edit_config)
+        btn_sorter = Button("Trier", ButtonStyle.blurple, self.open_sorter_menu, emoji=Emoji.ARROW_UP.value)
+        btn_filter = Button("Filtrer", ButtonStyle.blurple, self.open_filter_menu, emoji=Emoji.FILTRE.value)
+        btn_validate = Button("Valider", ButtonStyle.green, partial(self.set_menu_p, page=0))
+
+        btn_clear = Button("Supprimer les Filtres/Tries", ButtonStyle.red, self.clear_filters_sorters)
+        btn_add_genre = Button("🔧Genre", ButtonStyle.grey, self.add_movie)
+
+        # Ligne 1
+        inputs.append(btn_sorter)
+        inputs.append(btn_filter)
+        inputs.append(btn_add_movie)
+        inputs.append(btn_config)
+        inputs.append(btn_validate)
+        # Ligne 2
+        inputs.append(btn_clear)
+        inputs.append(NONE_BTN)
+        inputs.append(NONE_BTN)
+        inputs.append(NONE_BTN)
+        inputs.append(NONE_BTN)
+
+        return View(self.author, inputs)
+
+    @valide_inter()
+    @menu()
+    async def set_menu_p(self, page):
+        self.menu_p = page
+
+    @valide_inter()
+    @menu()
+    async def clear_filters_sorters(self):
+        self.filters.clear()
 
 
 class SorterMenu:
@@ -445,7 +473,7 @@ class SorterMenu:
             # Initalise BTN
             sorters_btn = []
             for btn_id, btn_value in SORTER_VALUES.items():
-                sorters_btn.append(Button(btn_value["name"], ButtonStyle.green, partial(self.set_sorter_slc, value=btn_value)))
+                sorters_btn.append(Button(btn_value["name"], ButtonStyle.blurple, partial(self.set_sorter_slc, value=btn_value)))
 
             btn_cancel = Button("Retour", ButtonStyle.grey, self.parent.m_menu)
             btn_validate = Button("Valider", ButtonStyle.green, self.validate)
@@ -512,6 +540,7 @@ class SorterMenu:
     @valide_inter()
     async def validate(self):
         self.parent.filters = self.filters
+        await self.parent.load_movies()
         await self.parent.m_menu()
         del self
 
@@ -565,10 +594,12 @@ class FilterMenu:
 
         else:
             btns = []
-            if FILTER_VALUES[self.filter_slc]["type"] in (FilterOpt.INT, FilterOpt.DATE):
-                for btn in FILTER_VALUES[self.filter_slc]["type"]._member_map_.values():
+            _type = FILTER_VALUES[self.filter_slc]["type"]
+            if _type in (FilterOpt.INT, FilterOpt.DATE):
+                for btn in _type._member_map_.values():
                     btns.append(Button(btn.value[0], ButtonStyle.blurple,
-                                       partial(self.int_open_modal, value=btn, _filter=FILTER_VALUES[self.filter_slc])))
+                                       partial((self.int_open_modal, self.date_open_modal)[_type ==  FilterOpt.DATE],
+                                               value=btn, _filter=FILTER_VALUES[self.filter_slc])))
 
                 btn_cancel = Button("Retour", ButtonStyle.grey, self.cancel_filter)
 
@@ -629,24 +660,24 @@ class FilterMenu:
     async def int_open_modal(self, interaction: Interaction, value: FilterOpt.INT, _filter):
         if value == FilterOpt.INT.BETWEEN:
             modal = Modal([
-                TextInput("Entre", 1, 3, str.isdigit),
-                TextInput("et ", 1, 3, str.isdigit)],
+                TextInput("Entre", 1, 3, "value1", str.isdigit),
+                TextInput("et ", 1, 3, "value2", str.isdigit)],
                 partial(self.int_get_modal, opt=value, _filter=_filter))
         else:
             modal = Modal([
-                TextInput("Valeur",1, 3    , str.isdigit)],
+                TextInput("Valeur",1, 3 , "value", str.isdigit)],
                 partial(self.int_get_modal, opt=value, _filter=_filter))
         await interaction.response.send_modal(modal)
 
     async def date_open_modal(self, interaction: Interaction, value: FilterOpt.INT, _filter):
         if value == FilterOpt.DATE.BETWEEN:
             modal = Modal([
-                TextInput("Entre (dd/mm/aaaa)", 10, 10, is_date_format),
-                TextInput("et (dd/mm/aaaa)", 10, 10, is_date_format)],
+                TextInput("Entre (dd/mm/aaaa)", 10, 10, "value", is_date_format),
+                TextInput("et (dd/mm/aaaa)", 10, 10, "value2", is_date_format)],
                 partial(self.date_get_modal, opt=value, _filter=_filter))
         else:
             modal = Modal([
-                TextInput("Valeur (dd/mm/aaaa)",10, 10 , is_date_format)],
+                TextInput("Valeur (dd/mm/aaaa)",10, 10, "value", is_date_format)],
                 partial(self.date_get_modal, opt=value, _filter=_filter))
         await interaction.response.send_modal(modal)
 
@@ -670,7 +701,7 @@ class FilterMenu:
         value = list(value.values())
         if len(value) == 1:
             value = value[0]
-            value = f"'{datetime.datetime(*map(int, value.split("/")[::-1]))}'"
+            value = datetime.datetime(*map(int, value.split("/")[::-1]))
 
         self.filters.add_filter(
             Filter(self.filters,
@@ -682,8 +713,9 @@ class FilterMenu:
     @valide_inter()
     async def validate(self):
         self.parent.filters = self.filters
-        self.parent.page = 0
+        self.parent.parent.page = 0
         await self.parent.count_pages()
+        await self.parent.load_movies()
         await self.parent.m_menu()
         del self
 
@@ -813,21 +845,21 @@ class AddMovieMenu:
 
     async def edit_open_modal(self, interaction: Interaction):
         modal = Modal([
-            TextInput("Titre", 1, 64, None, self.movie.title),
-            TextInput("Durée", 1, 3, check=str.isdigit, default=self.movie.duration),
-            TextInput("A voir (o/n)", 1, 1, lambda x: x in "on",
+            TextInput("Titre", 1, 64, "title", None, self.movie.title),
+            TextInput("Durée", 1, 3, "duration", check=str.isdigit, default=self.movie.duration),
+            TextInput("A voir (o/n)", 1, 1, "to_see", lambda x: x in "on",
                       "no"[self.movie.to_see] if self.movie.to_see is not None else None),
-            TextInput("Url", 0, 255, default=self.movie.url, required=False),
+            TextInput("Url", 0, 255, "url", default=self.movie.url, required=False),
         ], self.edit_callback_modal)
         await interaction.response.send_modal(modal)
 
     @menu()
     @valide_inter()
     async def edit_callback_modal(self, values):
-        self.movie.title = values["Titre"] or self.movie.title
-        self.movie.duration = int(values["Durée"]) if values["Durée"] else self.movie.duration
-        self.movie.to_see = values["A voir (o/n)"]=='o' if values["A voir (o/n)"] is not None else self.movie.to_see
-        self.movie.url = values["Url"] or self.movie.url
+        self.movie.title = values["title"] or self.movie.title
+        self.movie.duration = int(values["duration"]) if values["duration"] else self.movie.duration
+        self.movie.to_see = values["to_see"]=='o' if values["to_see"] is not None else self.movie.to_see
+        self.movie.url = values["url"] or self.movie.url
 
     @menu()
     @valide_inter()
@@ -847,17 +879,18 @@ class AddMovieMenu:
             self.movie.genre.remove(int(values))
 
     async def search_open_modal(self, interaction: Interaction):
-        modal = Modal([TextInput("Titre", 1, 64)], self.search_callback_modal)
+        modal = Modal([TextInput("Titre", 1, 64, "title")], self.search_callback_modal)
         await interaction.response.send_modal(modal)
 
     @valide_inter()
     async def search_callback_modal(self, value):
-        await SearchMovieMenu(self, value["Titre"]).m_menu()
+        await SearchMovieMenu(self, value["title"]).m_menu()
 
     @valide_inter()
     async def validate(self):
         await add_movie(self.movie)
-        await self.parent.setup()
+        await self.parent.count_pages()
+        await self.parent.m_menu()
 
     async def search(self, interaction: Interaction):
         if not self.movie.tmdb_id and not self.movie.title:
@@ -935,12 +968,12 @@ class SearchMovieMenu:
         self.movie_slc = get_detail(self.movies[int(value)][2], os.getenv("APKEY"))
 
     async def search_open_modal(self, interaction: Interaction):
-        modal = Modal([TextInput("Titre", 1, 64)], self.search_callback_modal)
+        modal = Modal([TextInput("Titre", 1, 64, "title")], self.search_callback_modal)
         await interaction.response.send_modal(modal)
 
     @valide_inter()
     async def search_callback_modal(self, value):
-        self.__init__(self.parent, value["Titre"])
+        self.__init__(self.parent, value["title"])
         await self.m_menu()
 
     @valide_inter()
@@ -958,10 +991,11 @@ class EditMovieMenu(AddMovieMenu):
         self.title = "Modifier le Film"
         self.movie = movie
 
+    @valide_act()
     @valide_inter()
     async def validate(self):
         await edit_movie(self.movie)
-        await self.parent.setup()
+        await self.parent.m_menu()
 
 
 class ConfigMenu:
@@ -973,8 +1007,8 @@ class ConfigMenu:
         self.message = self.parent.message
         self.author = self.parent.author
 
-        self.config = [None, ]
-        self.default_config = [None, ]
+        self.config = {}
+        self.default_config = {}
 
     async def setup(self):
         self.default_config, self.config = await get_config(((await get_authors())[self.author.name], USER_ID_DEFAULT))
@@ -986,10 +1020,12 @@ class ConfigMenu:
         inputs = []
 
         edit = Button("📝", ButtonStyle.green, self.edit_open_modal)
+        test = Button("test", ButtonStyle.green, self.save_filter)
         back = Button("Retour", ButtonStyle.grey, self.parent.m_menu)
         validate = Button("Valider", ButtonStyle.green, self.validate)
 
         inputs.append(edit)
+        inputs.append(test)
         inputs.append(back)
         inputs.append(validate)
 
@@ -1009,20 +1045,26 @@ class ConfigMenu:
     # Buttons
     async def edit_open_modal(self, interaction: Interaction):
         modal = Modal([TextInput("Nombre de film affiché par page (1-25)", 0, 2,
-                                 lambda x: (x.isdigit() and 0 < int(x) < 26) or x=="",
+                                 "nbr_movie", lambda x: (x.isdigit() and 0 < int(x) < 26) or x=="",
                                  self.config[0] if self.config else self.default_config[0])], self.edit_callback_modal)
         await interaction.response.send_modal(modal)
 
     @valide_inter()
     @menu()
     async def edit_callback_modal(self, values):
-        max_movie_in_page = values["Nombre de film affiché par page (1-25)"]
-        self.config[0] = max_movie_in_page
+        max_movie_in_page = values["nbr_movie"]
+        self.config["nbr_movie"] = max_movie_in_page
 
     @valide_inter()
     async def validate(self):
         await edit_config(self.config, (await get_authors())[self.author.name])
         await self.parent.setup()
+        await self.parent.m_menu()
+
+    @valide_inter()
+    @menu()
+    async def save_filter(self):
+        pass
 
 
 class DetailMovieMenu(SearchMovieMenu):

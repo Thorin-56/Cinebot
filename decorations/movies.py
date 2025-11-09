@@ -1,7 +1,10 @@
 import inspect
 from functools import  wraps
-import asyncio
+
+import discord.ui
 from discord import Interaction
+from utils import Modal
+
 
 # Decorateurs
 def valide_inter():
@@ -15,6 +18,17 @@ def valide_inter():
             else:
                 result = func(self, *args, **kwargs)
             return result
+
+        return wrapper
+
+    return decorateur
+
+def valide_act():
+    def decorateur(func):
+        @wraps(func)
+        async def wrapper(self, interaction: Interaction, *args, **kwargs):
+            await  interaction.response.send_modal(
+                Modal([discord.ui.TextDisplay("Validez vous")], lambda inter, _: func(self, inter)))
 
         return wrapper
 
