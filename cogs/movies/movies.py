@@ -1,9 +1,9 @@
+import json
 import os
 from copy import copy
 
 from discord import app_commands, Embed
 from discord.ext import commands
-from discord.ui import ActionRow
 from dotenv import load_dotenv
 
 from database_manager import DatabaseManager
@@ -22,6 +22,21 @@ async def get_authors():
 async def get_genres():
     genres = await DatabaseManager.execute_query("SELECT id, name FROM genres", fetch=True)
     return genres
+
+async def add_genre(name, author):
+    await DatabaseManager.execute_query("INSERT INTO genres (name, created_by)"
+                                        "VALUES (%s, %s)", (name, author))
+
+async def delete_genres(ids):
+    if isinstance(ids, list):
+        query = f"DELETE FROM genres WHERE id in {tuple(ids)}"
+    else:
+        query = f"DELETE FROM genres WHERE id={ids}"
+    await DatabaseManager.execute_query(query)
+
+async def edit_genre(_id, value):
+    query = f"UPDATE genres SET name=%s WHERE id=%s"
+    await DatabaseManager.execute_query(query, (value, _id))
 
 def get_query(_base: str, filters: Filters):
     base = (
@@ -84,7 +99,7 @@ async def delete_movie(movie_id):
     await DatabaseManager.execute_query(query)
 
 async def get_config(user_id):
-    query = f"SELECT c.max_movie_in_page FROM config c WHERE c.user_id IN {user_id}"
+    query = f"SELECT c.max_movie_in_page, c.filters FROM config c WHERE c.user_id IN {user_id}"
     config =  await DatabaseManager.execute_query(query, fetch=True)
     if not config:
         query = (f"INSERT INTO config (user_id, max_movie_in_page) "
@@ -95,7 +110,7 @@ async def get_config(user_id):
     return config
 
 async def edit_config(config, user_id):
-    query = f"UPDATE config SET max_movie_in_page=%s WHERE user_id={user_id}"
+    query = f"UPDATE config SET max_movie_in_page=%s, filters=%s WHERE user_id={user_id}"
     await DatabaseManager.execute_query(query, config)
 
 def is_date_format(x: str):
@@ -223,7 +238,22 @@ class MainMenu:
     @valide_inter()
     async def setup(self):
         default_config, config = (await get_config(((await get_authors())[self.author.name], USER_ID_DEFAULT)))
-        self.max_movie_in_page = config[0] if config and config[0] else default_config[0]
+        self.max_movie_in_page = default_config[0]
+        if config:
+            if config[0] is not None:
+                self.max_movie_in_page = config[0]
+            if config[1]:
+                data: dict = json.loads(config[1])
+                self.filters.genres_include = data["genres_includes"]
+                self.filters.genres_exclude = data["genres_excludes"]
+                for x in data["others_filters"]:
+                    self.filters.add_filter(
+                        Filter(self.filters, x["name"], x["is_and"], x["is_not"], x["cdt"])
+                    )
+                for x in data["sorters"]:
+                    self.filters.add_sorter(
+                        Sorter(self.filters, x["name"], x["is_asc"], x["value"])
+                    )
 
         self.genres = dict(await get_genres())
         self.filters.genres = self.genres
@@ -345,7 +375,7 @@ class MainMenu:
 
     @valide_inter()
     async def manage_genre(self):
-        await AddMovieMenu(self).m_menu()
+        await ManageGenreMenu(self).m_menu()
 
     @valide_inter()
     async def edit_config(self):
@@ -417,7 +447,7 @@ class MainMenu:
         btn_validate = Button("Valider", ButtonStyle.green, partial(self.set_menu_p, page=0))
 
         btn_clear = Button("Supprimer les Filtres/Tries", ButtonStyle.red, self.clear_filters_sorters)
-        btn_add_genre = Button("🔧Genre", ButtonStyle.grey, self.add_movie)
+        btn_add_genre = Button("🔧Genre", ButtonStyle.grey, self.manage_genre)
 
         # Ligne 1
         inputs.append(btn_sorter)
@@ -427,7 +457,7 @@ class MainMenu:
         inputs.append(btn_validate)
         # Ligne 2
         inputs.append(btn_clear)
-        inputs.append(NONE_BTN)
+        inputs.append(btn_add_genre)
         inputs.append(NONE_BTN)
         inputs.append(NONE_BTN)
         inputs.append(NONE_BTN)
@@ -793,7 +823,7 @@ class AddMovieMenu:
         genre_to_add = dict(filter(lambda x: x[0] not in self.movie.genre, genres))
         genre_to_remove = dict(filter(lambda x: x[0] in self.movie.genre, genres))
 
-        add_genre = None
+        add_genres = None
         remove_genre = None
 
         inputs = []
@@ -802,7 +832,7 @@ class AddMovieMenu:
         validate = Button("Valider", ButtonStyle.green, self.validate if self.movie.is_ready() else None)
         back = Button("Retour", ButtonStyle.grey, self.parent.m_menu)
         if genre_to_add:
-            add_genre = Selecteur("Ajouter genres", 1, len(genre_to_add), [
+            add_genres = Selecteur("Ajouter genres", 1, len(genre_to_add), [
                 SelecteurOption(x[1], "", x[0]) for x in genre_to_add.items()
             ], self.add_genres)
         if genre_to_remove:
@@ -814,8 +844,8 @@ class AddMovieMenu:
         inputs.append(edit)
         inputs.append(validate)
         inputs.append(back)
-        if add_genre:
-            inputs.append(add_genre)
+        if add_genres:
+            inputs.append(add_genres)
         if remove_genre:
             inputs.append(remove_genre)
         return View(self.parent.author, inputs)
@@ -1007,8 +1037,8 @@ class ConfigMenu:
         self.message = self.parent.message
         self.author = self.parent.author
 
-        self.config = {}
-        self.default_config = {}
+        self.config: list = [None, None, ]
+        self.default_config = [None, None, ]
 
     async def setup(self):
         self.default_config, self.config = await get_config(((await get_authors())[self.author.name], USER_ID_DEFAULT))
@@ -1053,7 +1083,7 @@ class ConfigMenu:
     @menu()
     async def edit_callback_modal(self, values):
         max_movie_in_page = values["nbr_movie"]
-        self.config["nbr_movie"] = max_movie_in_page
+        self.config[0] = max_movie_in_page
 
     @valide_inter()
     async def validate(self):
@@ -1064,7 +1094,17 @@ class ConfigMenu:
     @valide_inter()
     @menu()
     async def save_filter(self):
-        pass
+        config_filter = {"genres_excludes": self.parent.filters.genres_exclude,
+                         "genres_includes": self.parent.filters.genres_include,
+                         "others_filters": [{"name": f.name,
+                                             "is_and": f.is_and,
+                                             "is_not": f.is_not,
+                                             "cdt": f._cdt} for f in self.parent.filters._filters],
+                         "sorters": [{"name": s.name,
+                                      "value": s.value,
+                                      "is_asc": s.is_asc} for s in self.parent.filters.sorters]}
+        self.config[1] = json.dumps(config_filter)
+        await edit_config(self.config, (await get_authors())[self.author.name])
 
 
 class DetailMovieMenu(SearchMovieMenu):
@@ -1079,6 +1119,115 @@ class DetailMovieMenu(SearchMovieMenu):
     async def search_callback_modal(self, value):
         super().__init__(self.parent, value["Titre"])
         await self.m_menu()
+
+
+class ManageGenreMenu:
+    def __init__(self, parent):
+        self.parent: MainMenu = parent
+        self.message = self.parent.message
+        self.logger = self.parent.logger
+        self.bot = self.parent.bot
+        self.author = self.parent.author
+
+        self.genres = []
+        self.genre_slc = None
+
+    @property
+    async def view(self) -> View:
+        inputs = []
+
+        btn_add = Button("➕ genre", ButtonStyle.green, self.add_genre_open_modal)
+        btn_valider = Button("Valider", ButtonStyle.green, self.parent.m_menu)
+        selecteur = Selecteur("selectionez genre", 1, len(self.genres), [
+            SelecteurOption(genre[1], "", genre[0]) for genre in self.genres
+        ], self.set_genre_slc)
+
+        btn_delete = Button("Supprimer", ButtonStyle.red, self.delete_genre)
+        btn_edit = Button("📝", ButtonStyle.blurple, self.edit_genre_open_modal)
+        btn_back = Button("Retour", ButtonStyle.grey, self.unslc_genre_slc)
+
+        if not self.genre_slc:
+            # Ligne 1
+            inputs.append(btn_add)
+            inputs.append(btn_valider)
+            inputs.append(NONE_BTN)
+            inputs.append(NONE_BTN)
+            inputs.append(NONE_BTN)
+            # Ligne 2
+            inputs.append(selecteur)
+        else:
+            inputs.append(btn_delete)
+            if isinstance(self.genre_slc, int):
+                inputs.append(btn_edit)
+            else:
+                inputs.append(NONE_BTN)
+            inputs.append(btn_back)
+            inputs.append(NONE_BTN)
+            inputs.append(NONE_BTN)
+
+        return View(self.author, inputs)
+
+    @property
+    async def embed(self) -> Embed:
+        embed = Embed(title="Gérer les genres")
+        embed.add_field(name="Genres:", value="\n".join([f"```{genre_name}```" for genre_id, genre_name in self.genres]))
+
+        return embed
+
+    @valide_inter()
+    async def m_menu(self):
+        if not self.genres:
+            await self.load_genres()
+        await self.message.resource.edit(embed=await self.embed, view=await self.view)
+
+    @valide_inter()
+    async def load_genres(self):
+        self.genres = await get_genres()
+
+    @valide_inter()
+    @menu()
+    async def set_genre_slc(self, value):
+        if len(value) == 1:
+            self.genre_slc = int(value[0])
+        else:
+            self.genre_slc = [*map(int, value)]
+
+    async def add_genre_open_modal(self, interraction: Interaction):
+        modal = Modal([TextInput("Nom du genre", 1, 32, "genre")], self.add_genre_get_modal)
+        await interraction.response.send_modal(modal)
+
+    @valide_inter()
+    @menu()
+    async def add_genre_get_modal(self, value):
+        value = value["genre"]
+        await add_genre(value, (await get_authors())[self.author.name])
+        await self.load_genres()
+
+    @valide_inter()
+    @menu()
+    async def delete_genre(self):
+        await delete_genres(self.genre_slc)
+        self.genre_slc = None
+        await self.load_genres()
+
+    @valide_inter()
+    @menu()
+    async def unslc_genre_slc(self):
+        self.genre_slc = None
+
+    async def edit_genre_open_modal(self, interraction: Interaction):
+        modal = Modal([
+            TextInput("Genre", 1, 32, "genre", default=dict(self.genres)[self.genre_slc])
+        ], self.edit_genre_get_modal)
+        await interraction.response.send_modal(modal)
+
+    @valide_inter()
+    @menu()
+    async def edit_genre_get_modal(self, value):
+        value = value["genre"]
+        await edit_genre(self.genre_slc, value)
+        self.genre_slc = None
+        await self.load_genres()
 
 
 async def setup(bot):
