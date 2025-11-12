@@ -342,22 +342,22 @@ class MainMenu:
 
     # Arrows
     @valide_inter()
-    @menu()
+    @menu(load_movie=True)
     def move_double_left_page(self):
         self.page = max(self.page - 5, 0)
 
     @valide_inter()
-    @menu()
+    @menu(load_movie=True)
     def move_left_page(self):
         self.page = self.page - 1
 
     @valide_inter()
-    @menu()
+    @menu(load_movie=True)
     def move_right_page(self):
         self.page = self.page + 1
 
     @valide_inter()
-    @menu()
+    @menu(load_movie=True)
     def move_double_right_page(self):
         self.page = min(self.page + 5, self.len_pages - 1)
 
@@ -390,7 +390,7 @@ class MainMenu:
 
     @valide_act()
     @valide_inter()
-    @menu()
+    @menu(load_movie=True)
     async def delete_movie(self):
         await delete_movie(self.movies[self.movie_select_in_page].movie_id)
 
@@ -470,7 +470,7 @@ class MainMenu:
         self.menu_p = page
 
     @valide_inter()
-    @menu()
+    @menu(load_movie=True)
     async def clear_filters_sorters(self):
         self.filters.clear()
 
@@ -1099,7 +1099,7 @@ class ConfigMenu:
                          "others_filters": [{"name": f.name,
                                              "is_and": f.is_and,
                                              "is_not": f.is_not,
-                                             "cdt": f._cdt} for f in self.parent.filters._filters],
+                                             "cdt": f.get_cdt} for f in self.parent.filters.get_filter_],
                          "sorters": [{"name": s.name,
                                       "value": s.value,
                                       "is_asc": s.is_asc} for s in self.parent.filters.sorters]}
@@ -1170,7 +1170,11 @@ class ManageGenreMenu:
     @property
     async def embed(self) -> Embed:
         embed = Embed(title="Gérer les genres")
-        embed.add_field(name="Genres:", value="\n".join([f"```{genre_name}```" for genre_id, genre_name in self.genres]))
+        nbr = 10
+        display_genres = [self.genres[x:min(x+nbr, len(self.genres))] for x, _ in list(enumerate(self.genres))[::nbr]]
+        print(display_genres)
+        for genres in display_genres:
+            embed.add_field(name="Genres:", value="\n".join([f"```{genre_name}```" for genre_id, genre_name in genres]))
 
         return embed
 
@@ -1203,6 +1207,7 @@ class ManageGenreMenu:
         await add_genre(value, (await get_authors())[self.author.name])
         await self.load_genres()
 
+    @valide_act()
     @valide_inter()
     @menu()
     async def delete_genre(self):

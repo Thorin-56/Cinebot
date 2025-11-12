@@ -50,6 +50,14 @@ class Filters:
         return self._sorters
 
     @property
+    def get_filter_(self):
+        return self._filters
+
+    @property
+    def get_sorter_(self):
+        return self._sorters
+
+    @property
     def filters(self):
         filters = deepcopy(self._filters)
         if self.genres_include:
@@ -127,7 +135,11 @@ class Filter:
 
     @property
     def index(self):
-        return self.parent._filters.index(self)
+        return self.parent.get_filter_.index(self)
+
+    @property
+    def get_cdt(self):
+        return self._cdt
 
     @property
     def cdt(self):
@@ -169,7 +181,7 @@ class Sorter:
 
     @property
     def index(self):
-        return self.parent._sorters.index(self)
+        return self.parent.get_sorter_.index(self)
 
     @property
     def sorters(self):
