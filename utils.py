@@ -158,7 +158,7 @@ class View(discord.ui.View):
 
 
 class Modal(discord.ui.Modal):
-    def __init__(self, items: list[TextInput | discord.ui.Item | Button], callback: Callable = callable):
+    def __init__(self, items: list[TextInput | discord.ui.Item | Button], callback: Callable | None):
         super().__init__(title="Movie")
         self.text_inputs: dict[discord.ui.TextInput, TextInput] = {}
         self.callback = callback
@@ -185,6 +185,8 @@ class Modal(discord.ui.Modal):
                     values.update({j.name: None})
                     continue
             values.update({j.name: i.value})
-
-        await self.callback(interaction, values)
+        if self.callback:
+            await self.callback(interaction, values)
+        else:
+            await interaction.response.defer()
 
