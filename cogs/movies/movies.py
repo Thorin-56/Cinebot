@@ -200,7 +200,7 @@ class Movies(commands.Cog):
                                                           delete_after=900)
         _menu = MainMenu(self, interaction.user, message)
         await _menu.setup()
-        self.bot.loop.call_later(900, _menu.cleanup)
+        self.bot.loop.call_later(900, _menu.cleanup, )
 
 
 class MainMenu:
