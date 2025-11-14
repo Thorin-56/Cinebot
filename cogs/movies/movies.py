@@ -103,9 +103,10 @@ async def delete_movie(movie_id):
 async def get_config(user_id):
     query = f"SELECT c.max_movie_in_page, c.filters FROM config c WHERE c.user_id IN {user_id}"
     config: tuple =  await DatabaseManager.execute_query(query, fetch=True)
-    if not len(config) == 1:
-        await DatabaseManager.execute_query("INSERT INTO users (user_id, max_movie_in_page, filters) "
-                                            "VALUES (%s, %s, %s)", (user_id[0] if user_id[0] != 0 else user_id[1], *config))
+    if len(config) == 1:
+        await DatabaseManager.execute_query(
+            "INSERT INTO config (user_id, max_movie_in_page, filters) VALUES (%s, %s, %s)",
+            (user_id[0] if user_id[0] != 0 else user_id[1], *config[0]))
         return config[0], config[0]
     return config
 
