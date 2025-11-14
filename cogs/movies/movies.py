@@ -16,8 +16,10 @@ load_dotenv()
 # Fonctions
 async def get_authors():
     users = await DatabaseManager.execute_query("SELECT users.id, users.username FROM users "
-                                  "INNER JOIN movies on movies.created_by = users.id GROUP by users.id;", fetch=True)
-    return dict([*map(lambda x: x[::-1], users)])
+                                  "GROUP by users.id;", fetch=True)
+    users = dict([*map(lambda x: x[::-1], users)])
+    print(users)
+    return users
 
 async def get_genres():
     genres = await DatabaseManager.execute_query("SELECT id, name FROM genres", fetch=True)
