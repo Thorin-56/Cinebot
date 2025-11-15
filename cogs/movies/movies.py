@@ -1,4 +1,5 @@
 import json
+import math
 import os
 from copy import copy
 
@@ -237,7 +238,7 @@ class MainMenu:
         del self
 
     @valide_inter()
-    async def setup(self):
+    async def load_config(self):
         default_config, config = (await get_config(((await get_authors())[self.author.name], USER_ID_DEFAULT)))
         self.max_movie_in_page = default_config[0]
         if config:
@@ -256,6 +257,10 @@ class MainMenu:
                         Sorter(self.filters, x["name"], x["is_asc"], x["value"])
                     )
 
+    @valide_inter()
+    async def setup(self):
+
+        await self.load_config()
         self.genres = dict(await get_genres())
         self.filters.genres = self.genres
 
@@ -1133,15 +1138,25 @@ class ManageGenreMenu:
         self.genres = []
         self.genre_slc = None
 
+        self.nbr_pages_genres = None
+        self.page_slc = 0
+
     @property
     async def view(self) -> View:
         inputs = []
 
         btn_add = Button("➕ genre", ButtonStyle.green, self.add_genre_open_modal)
-        btn_valider = Button("Valider", ButtonStyle.green, self.parent.m_menu)
-        selecteur = Selecteur("selectionez genre", 1, len(self.genres), [
-            SelecteurOption(genre[1], "", genre[0]) for genre in self.genres
-        ], self.set_genre_slc)
+        btn_valider = Button("Valider", ButtonStyle.green, self.validate)
+
+        selecteurs_option = []
+        if self.page_slc > 0:
+            selecteurs_option.append(SelecteurOption("<----------", "page précédente", "P"))
+        for genre in self.genres[23 * self.page_slc:23 * self.page_slc + 23]:
+            selecteurs_option.append(SelecteurOption(genre[1], "", genre[0]))
+        if self.page_slc < self.nbr_pages_genres - 1:
+            selecteurs_option.append(SelecteurOption("------->", "acceder au autre genres", "N"))
+        selecteur = Selecteur("selectionez genre", 1, len(selecteurs_option),
+                              selecteurs_option, self.f_selecteur_genres)
 
         btn_delete = Button("Supprimer", ButtonStyle.red, self.delete_genre)
         btn_edit = Button("📝", ButtonStyle.blurple, self.edit_genre_open_modal)
@@ -1173,7 +1188,6 @@ class ManageGenreMenu:
         embed = Embed(title="Gérer les genres")
         nbr = 10
         display_genres = [self.genres[x:min(x+nbr, len(self.genres))] for x, _ in list(enumerate(self.genres))[::nbr]]
-        print(display_genres)
         for genres in display_genres:
             embed.add_field(name="Genres:", value="\n".join([f"```{genre_name}```" for genre_id, genre_name in genres]))
 
@@ -1188,14 +1202,28 @@ class ManageGenreMenu:
     @valide_inter()
     async def load_genres(self):
         self.genres = await get_genres()
+        self.nbr_pages_genres = math.ceil(len(self.genres) / 24)
+
 
     @valide_inter()
     @menu()
-    async def set_genre_slc(self, value):
+    async def f_selecteur_genres(self, value: list[str]):
         if len(value) == 1:
-            self.genre_slc = int(value[0])
+            if value[0].isdigit():
+                await self.set_genre_slc(int(value[0]))
+            elif value[0] == "N":
+                self.page_slc += 1
+            elif value[0] == "P":
+                self.page_slc -= 1
         else:
-            self.genre_slc = [*map(int, value)]
+            if "N" in value:
+                value.remove("N")
+            if "P" in value:
+                value.remove("P")
+            await self.set_genre_slc([*map(int, value)])
+
+    async def set_genre_slc(self, value):
+            self.genre_slc = value
 
     async def add_genre_open_modal(self, interraction: Interaction):
         modal = Modal([TextInput("Nom du genre", 1, 32, "genre")], self.add_genre_get_modal)
@@ -1235,6 +1263,15 @@ class ManageGenreMenu:
         self.genre_slc = None
         await self.load_genres()
 
+    @valide_inter()
+    async def validate(self):
+        await self.parent.load_config()
+        await self.parent.m_menu()
+
+
+class ProgramMovieMenu:
+    def __init__(self):
+        pass
 
 async def setup(bot):
     await bot.add_cog(Movies(bot, bot.logger))
